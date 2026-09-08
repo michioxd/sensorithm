@@ -1,0 +1,216 @@
+import { Button, LineEdit, Palette } from "std-widgets.slint";
+
+component SensorBox inherits HorizontalLayout {
+    in property <int> index;
+    in property <bool> active;
+
+    spacing: 16px;
+    alignment: start;
+
+    Rectangle {
+        width: 44px;
+        height: 44px;
+        border-radius: 6px;
+        border-width: 2px;
+
+        border-color: root.active ? Palette.accent-background : Palette.border;
+        background: root.active ? Palette.accent-background : Palette.control-background;
+    }
+
+    Text {
+        text: root.index;
+        vertical-alignment: center;
+        font-size: 18px;
+        color: Palette.foreground;
+        font-weight: 700;
+    }
+}
+
+export component MainWindow inherits Window {
+    title: "sensorithm server";
+    width: 500px;
+    height: 460px;
+
+    background: Palette.background;
+    default-font-family: "Segoe UI";
+
+    in-out property <string> port: "12345";
+    in property <string> phone-name: "{{phoneName}}";
+    in property <string> major-version: "{{majorVersionNumber}}";
+    in property <string> client-ver: "{{androidAppClientVer}}";
+    in property <string> server-ver: "{{serverVersion}}";
+    in property <bool> adb-found: false;
+    in property <bool> brokenithm-available: false;
+
+    in property <[bool]> sensor-states: [false, false, false, false, false, false];
+
+    callback recalibrate-clicked();
+    callback github-clicked();
+    callback forward-port-clicked();
+
+    VerticalLayout {
+        padding: 24px;
+
+        HorizontalLayout {
+            VerticalLayout {
+                spacing: 24px;
+                width: 350px;
+                alignment: start;
+
+                VerticalLayout {
+                    spacing: 12px;
+                    Text {
+                        text: "Configuration";
+                        font-size: 20px;
+                        font-weight: 700;
+                        color: Palette.foreground;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 12px;
+                        alignment: start;
+                        Text {
+                            text: "Server port:";
+                            vertical-alignment: center;
+                            font-size: 14px;
+                            color: Palette.foreground;
+                        }
+
+                        LineEdit {
+                            input-type: InputType.number;
+                            text: root.port;
+                            width: 120px;
+                        }
+
+                        Button {
+                            text: "Apply";
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 12px;
+                        alignment: start;
+                        cross-axis-alignment: CrossAxisAlignment.center;
+
+                        Text {
+                            text: "Brokenithm I/O:";
+                            vertical-alignment: center;
+                            font-size: 14px;
+                            color: Palette.foreground;
+                        }
+
+                        Rectangle {
+                            width: 12px;
+                            height: 12px;
+                            border-radius: 6px;
+                            background: root.brokenithm-available ? Palette.accent-background : Palette.border;
+                        }
+
+                        Text {
+                            text: root.brokenithm-available ? "Connected" : "Disconnected";
+                            vertical-alignment: center;
+                            font-size: 12px;
+                            color: Palette.foreground;
+                            opacity: 0.8;
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 12px;
+                    Text {
+                        text: "Connected device";
+                        font-size: 20px;
+                        font-weight: 700;
+                        color: Palette.foreground;
+                    }
+
+                    VerticalLayout {
+                        spacing: 6px;
+                        if root.phone-name == "": Text {
+                            text: "Please connect your Android™ device first!\nYou can use the \"Forward port to Android™ device (ADB)\" button below to forward the server port to your Android™ device via ADB if you have it installed.\nYou also can connect using network if your Android™ device and PC are on the same network (not recommended if using wireless network).";
+                            font-size: 14px;
+                            color: Palette.foreground;
+                            wrap: word-wrap;
+                        }
+
+                        if root.phone-name != "": Text {
+                            text: root.phone-name + " - Android " + root.major-version;
+                            font-size: 14px;
+                            color: Palette.foreground;
+                            wrap: word-wrap;
+                        }
+
+                        if root.phone-name != "": Text {
+                            text: "Client version: " + root.client-ver;
+                            font-size: 14px;
+                            color: Palette.foreground;
+                        }
+                    }
+
+                    if root.phone-name != "": Button {
+                        text: "Recalibrate";
+                        width: 350px;
+                        clicked => { root.recalibrate-clicked(); }
+                    }
+
+                    Button {
+                        text: root.adb-found ? "Forward port to Android™ device (ADB)" : "Please install ADB first!";
+                        enabled: root.adb-found;
+                        width: 350px;
+                        clicked => { root.forward-port-clicked(); }
+                    }
+                }
+            }
+
+            VerticalLayout {
+                spacing: 16px;
+                alignment: start;
+                width: 150px;
+
+                Text {
+                    text: "Preview";
+                    font-size: 20px;
+                    font-weight: 700;
+                    color: Palette.foreground;
+                }
+
+                VerticalLayout {
+                    padding-left: 24px;
+                    spacing: 8px;
+
+                    for state[i] in root.sensor-states: SensorBox {
+                        index: i + 1;
+                        active: state;
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            alignment: start;
+            spacing: 0px;
+
+            Text {
+                text: "sensorithm server v" + root.server-ver + " by michioxd - ";
+                color: Palette.foreground;
+                font-size: 13px;
+                vertical-alignment: center;
+                opacity: 0.8;
+            }
+
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.github-clicked(); }
+
+                Text {
+                    text: "GitHub";
+                    color: Palette.accent-background;
+                    opacity: parent.has-hover ? 0.8 : 1.0;
+                    font-size: 13px;
+                    vertical-alignment: bottom; // lol idk
+                }
+            }
+        }
+    }
+}

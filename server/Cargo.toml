@@ -4,3 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+slint = "1.17.1"
+webbrowser = "1.2.4"
+which = "8.0.6"
+
+[build-dependencies]
+slint-build = "1.17.1"
