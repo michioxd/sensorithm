@@ -4,10 +4,18 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncBufReadExt, AsyncWriteExt};
 use uuid::Uuid;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
+use serde::Deserialize;
+
+#[derive(Deserialize, Debug)]
+struct ClientInfo {
+    name: String,
+    os: String,
+    app: String,
+}
 
 #[cfg(windows)]
 use windows::{
@@ -171,9 +179,11 @@ fn apply_mask(mask: u8) {
 pub async fn run_server(
     ui_handle: slint::Weak<crate::MainWindow>,
     mut port_rx: watch::Receiver<Option<(String, u16, String)>>,
+    mut cmd_rx: tokio::sync::mpsc::UnboundedReceiver<(String, String)>,
 ) {
     let held_mask = Arc::new(AtomicU8::new(0));
     let client_masks: Arc<tokio::sync::Mutex<HashMap<String, u8>>> = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+    let client_cmd_txs: Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>> = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
 
     loop {
         let config_opt = port_rx.borrow().clone();
@@ -246,8 +256,22 @@ pub async fn run_server(
                             let ui_clone = ui_handle.clone();
                             let mask_clone = held_mask.clone();
                             let client_masks_clone = client_masks.clone();
+                            
+                            let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+                            let client_id = Uuid::new_v4().to_string();
+                            
+                            {
+                                let mut txs = client_cmd_txs.lock().await;
+                                txs.insert(client_id.clone(), tx);
+                            }
+                            
+                            let txs_clone = client_cmd_txs.clone();
+                            
                             tokio::spawn(async move {
-                                handle_client(stream, ui_clone, mask_clone, client_masks_clone).await;
+                                handle_client(stream, ui_clone, mask_clone, client_masks_clone, client_id.clone(), rx).await;
+                                
+                                let mut txs = txs_clone.lock().await;
+                                txs.remove(&client_id);
                             });
                         }
                         Err(e) => {
@@ -258,6 +282,14 @@ pub async fn run_server(
                 _ = port_rx.changed() => {
                     println!("Config changed; restarting/stopping listener");
                     break;
+                }
+                cmd_opt = cmd_rx.recv() => {
+                    if let Some((cid, cmd)) = cmd_opt {
+                        let txs = client_cmd_txs.lock().await;
+                        if let Some(tx) = txs.get(&cid) {
+                            let _ = tx.send(cmd);
+                        }
+                    }
                 }
             }
         }
@@ -276,24 +308,47 @@ async fn handle_client(
     ui_handle: slint::Weak<crate::MainWindow>, 
     held_mask: Arc<AtomicU8>,
     client_masks: Arc<tokio::sync::Mutex<HashMap<String, u8>>>,
+    client_id: String,
+    mut cmd_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
 ) {
     let _ = stream.set_nodelay(true);
     
     let client_ip = stream.peer_addr().map(|addr| addr.ip().to_string()).unwrap_or_else(|_| "Unknown IP".into());
-    let client_id = Uuid::new_v4().to_string();
+    
+    let mut reader = tokio::io::BufReader::new(stream);
+    let mut init_line = String::new();
+    let mut client_name = "Android Device".to_string();
+    let mut client_desc = client_ip.clone();
+    
+    if let Ok(Ok(n)) = tokio::time::timeout(std::time::Duration::from_secs(3), reader.read_line(&mut init_line)).await {
+        if n > 0 {
+            if let Ok(info) = serde_json::from_str::<ClientInfo>(&init_line) {
+                client_name = info.name;
+                client_desc = format!("{} - v{}", info.os, info.app);
+            }
+        }
+    }
+    
+    let server_version = env!("CARGO_PKG_VERSION");
+    let server_os = std::env::consts::OS;
+    let server_info = format!(r#"{{"version":"{}","os":"{}"}}"#, server_version, server_os);
+    let _ = reader.get_mut().write_all(format!("{}\n", server_info).as_bytes()).await;
+    let _ = reader.get_mut().flush().await;
     
     println!("Client {} ({}) connected, starting sensor loop", client_id, client_ip);
 
     let ui_h = ui_handle.clone();
     let cid = client_id.clone();
-    let cip = client_ip.clone();
+    let cdesc = client_desc.clone();
+    let cname = client_name.clone();
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(ui) = ui_h.upgrade() {
             let mut devices: Vec<crate::ConnectedDevice> = ui.get_connected_devices().iter().collect();
             devices.push(crate::ConnectedDevice {
                 id: cid.into(),
-                name: "Android Device".into(),
-                ip: cip.into(),
+                name: cname.into(),
+                description: cdesc.into(),
+                ip: client_ip.into(),
             });
             
             use slint::Model;
@@ -304,36 +359,53 @@ async fn handle_client(
 
     let mut buf = [0u8; 1];
     loop {
-        match stream.read_exact(&mut buf).await {
-            Ok(_) => {
-                let mask = buf[0] & 0x3F;
-                
-                {
-                    let mut masks = client_masks.lock().await;
-                    masks.insert(client_id.clone(), mask);
-                }
-                
-                let combined_mask = {
-                    let masks = client_masks.lock().await;
-                    masks.values().fold(0, |acc, &m| acc | m)
-                };
-                
-                held_mask.store(combined_mask, Ordering::SeqCst);
-
-                apply_mask(combined_mask);
-
-                let ui_h = ui_handle.clone();
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = ui_h.upgrade() {
-                        let states: Vec<bool> = (0..6).map(|i| (combined_mask & (1 << i)) != 0).collect();
-                        let sensor_model = Rc::new(VecModel::from(states));
-                        ui.set_sensor_states(ModelRc::from(sensor_model));
+        tokio::select! {
+            cmd_opt = cmd_rx.recv() => {
+                match cmd_opt {
+                    Some(cmd) => {
+                        let cmd_str = format!("{}\n", cmd);
+                        if let Err(e) = reader.get_mut().write_all(cmd_str.as_bytes()).await {
+                            eprintln!("Failed to send command to client {}: {}", client_id, e);
+                            break;
+                        }
+                        let _ = reader.get_mut().flush().await;
                     }
-                });
+                    None => break, // Channel closed
+                }
             }
-            Err(_) => {
-                println!("Client {} disconnected", client_id);
-                break;
+            read_res = reader.read_exact(&mut buf) => {
+                match read_res {
+                    Ok(_) => {
+                        let mask = buf[0] & 0x3F;
+                        
+                        {
+                            let mut masks = client_masks.lock().await;
+                            masks.insert(client_id.clone(), mask);
+                        }
+                        
+                        let combined_mask = {
+                            let masks = client_masks.lock().await;
+                            masks.values().fold(0, |acc, &m| acc | m)
+                        };
+                        
+                        held_mask.store(combined_mask, Ordering::SeqCst);
+
+                        apply_mask(combined_mask);
+
+                        let ui_h = ui_handle.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_h.upgrade() {
+                                let states: Vec<bool> = (0..6).map(|i| (combined_mask & (1 << i)) != 0).collect();
+                                let sensor_model = Rc::new(VecModel::from(states));
+                                ui.set_sensor_states(ModelRc::from(sensor_model));
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        println!("Client {} disconnected: {}", client_id, e);
+                        break;
+                    }
+                }
             }
         }
     }

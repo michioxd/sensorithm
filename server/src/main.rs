@@ -80,14 +80,15 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     
     let (port_tx, port_rx) = watch::channel(Some((initial_addr.clone(), initial_port, initial_path.clone())));
+    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel::<(String, String)>();
     
-    ui::setup_event_handlers(&ui, port_tx);
+    ui::setup_event_handlers(&ui, port_tx, cmd_tx);
 
     let ui_handle = ui.as_weak();
     thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            server::run_server(ui_handle, port_rx).await;
+            server::run_server(ui_handle, port_rx, cmd_rx).await;
         });
     });
 

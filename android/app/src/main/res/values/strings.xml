@@ -1,3 +1,5 @@
 <resources>
-    <string name="app_name">Sensorithm</string>
+    <string name="app_name">sensorithm</string>
+    <string name="connected">Connected</string>
+    <string name="disconnected">Disconnected</string>
 </resources>

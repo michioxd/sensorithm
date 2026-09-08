@@ -5,13 +5,14 @@ use tokio::sync::watch;
 pub fn setup_event_handlers(
     ui: &MainWindow,
     port_tx: watch::Sender<Option<(String, u16, String)>>,
+    cmd_tx: tokio::sync::mpsc::UnboundedSender<(String, String)>,
 ) {
     ui.on_github_clicked(|| {
         let _ = webbrowser::open("https://github.com/michioxd/sensorithm");
     });
 
-    ui.on_recalibrate_clicked(|id| {
-        println!("Recalibrate clicked for device {} (stub)", id);
+    ui.on_recalibrate_clicked(move |id| {
+        let _ = cmd_tx.send((id.to_string(), "RECALIBRATE".to_string()));
     });
 
     let ui_weak = ui.as_weak();
