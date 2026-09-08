@@ -1,4 +1,10 @@
-import { Button, LineEdit, Palette } from "std-widgets.slint";
+import {
+    Button,
+    LineEdit,
+    Palette,
+    CheckBox,
+    ScrollView,
+} from "std-widgets.slint";
 
 component SensorBox inherits HorizontalLayout {
     in property <int> index;
@@ -10,8 +16,8 @@ component SensorBox inherits HorizontalLayout {
     Rectangle {
         width: 44px;
         height: 44px;
-        border-radius: 6px;
-        border-width: 2px;
+        border-radius: 4px;
+        border-width: 1px;
 
         border-color: root.active ? Palette.accent-background : Palette.border;
         background: root.active ? Palette.accent-background : Palette.control-background;
@@ -26,35 +32,50 @@ component SensorBox inherits HorizontalLayout {
     }
 }
 
+export struct ConnectedDevice {
+    id: string,
+    name: string,
+    ip: string,
+}
+
 export component MainWindow inherits Window {
-    title: "sensorithm server";
-    width: 500px;
-    height: 460px;
+    title: "sensorithm server v" + root.server-ver + "";
+    width: 800px;
+    height: 435px;
 
     background: Palette.background;
     default-font-family: "Segoe UI";
 
+    in-out property <string> listen-address: "0.0.0.0";
     in-out property <string> port: "12345";
-    in property <string> phone-name: "{{phoneName}}";
-    in property <string> major-version: "{{majorVersionNumber}}";
-    in property <string> client-ver: "{{androidAppClientVer}}";
-    in property <string> server-ver: "{{serverVersion}}";
+    in-out property <string> shared-buffer-path: "Local\\BROKENITHM_SHARED_BUFFER";
     in property <bool> adb-found: false;
-    in property <bool> brokenithm-available: false;
+    in property <bool> config-valid: true;
+    in property <bool> server-ok: false;
+    in-out property <bool> auto-adb: false;
+    in-out property <bool> minimize-on-startup: false;
+    in property <string> server-ver: "{{serverVersion}}";
 
     in property <[bool]> sensor-states: [false, false, false, false, false, false];
+    in property <[ConnectedDevice]> connected-devices: [];
 
-    callback recalibrate-clicked();
+    callback recalibrate-clicked(string);
     callback github-clicked();
     callback forward-port-clicked();
+    callback apply-clicked(string, string, string);
+    callback config-edited(string, string, string);
+    callback start-stop-clicked();
 
     VerticalLayout {
         padding: 24px;
+        padding-bottom: 0px;
+        padding-top: 16px;
 
         HorizontalLayout {
+            spacing: 12px;
             VerticalLayout {
                 spacing: 24px;
-                width: 350px;
+                width: 280px;
                 alignment: start;
 
                 VerticalLayout {
@@ -69,33 +90,12 @@ export component MainWindow inherits Window {
                     HorizontalLayout {
                         spacing: 12px;
                         alignment: start;
-                        Text {
-                            text: "Server port:";
-                            vertical-alignment: center;
-                            font-size: 14px;
-                            color: Palette.foreground;
-                        }
-
-                        LineEdit {
-                            input-type: InputType.number;
-                            text: root.port;
-                            width: 120px;
-                        }
-
-                        Button {
-                            text: "Apply";
-                        }
-                    }
-
-                    HorizontalLayout {
-                        spacing: 12px;
-                        alignment: start;
                         cross-axis-alignment: CrossAxisAlignment.center;
 
                         Text {
-                            text: "Brokenithm I/O:";
+                            text: "Server:";
                             vertical-alignment: center;
-                            font-size: 14px;
+                            font-size: 13px;
                             color: Palette.foreground;
                         }
 
@@ -103,23 +103,132 @@ export component MainWindow inherits Window {
                             width: 12px;
                             height: 12px;
                             border-radius: 6px;
-                            background: root.brokenithm-available ? Palette.accent-background : Palette.border;
+                            background: root.server-ok ? Palette.accent-background : Palette.border;
                         }
 
                         Text {
-                            text: root.brokenithm-available ? "Connected" : "Disconnected";
+                            text: root.server-ok ? "Running" : "Not running";
                             vertical-alignment: center;
                             font-size: 12px;
                             color: Palette.foreground;
                             opacity: 0.8;
                         }
+
+                        Button {
+                            accessible-expandable: false;
+                            accessible-role: AccessibleRole.button;
+                            primary: !root.server-ok;
+                            enabled: root.config-valid;
+                            text: root.server-ok ? "Stop" : "Start";
+                            clicked => { root.start-stop-clicked(); }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 12px;
+                        alignment: start;
+                        Text {
+                            text: "Listen address:";
+                            vertical-alignment: center;
+                            font-size: 13px;
+                            color: Palette.foreground;
+                        }
+
+                        LineEdit {
+                            input-type: InputType.text;
+                            placeholder-text: "127.0.0.1";
+                            text: root.listen-address;
+                            width: 175px;
+                            edited(val) => {
+                                root.listen-address = val;
+                                root.config-edited(root.listen-address, root.port, root.shared-buffer-path);
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 12px;
+                        alignment: start;
+                        Text {
+                            text: "Server port:";
+                            vertical-alignment: center;
+                            font-size: 13px;
+                            color: Palette.foreground;
+                        }
+
+                        LineEdit {
+                            input-type: InputType.number;
+                            text: root.port;
+                            width: 195px;
+                            edited(val) => {
+                                root.port = val;
+                                root.config-edited(root.listen-address, root.port, root.shared-buffer-path);
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 12px;
+                        alignment: start;
+                        Text {
+                            text: "Brokenithm shared buffer path:";
+                            vertical-alignment: center;
+                            font-size: 13px;
+                            color: Palette.foreground;
+                        }
+
+                        LineEdit {
+                            input-type: InputType.text;
+                            text: root.shared-buffer-path;
+                            placeholder-text: "Local\\BROKENITHM_SHARED_BUFFER";
+                            width: 280px;
+                            edited(val) => {
+                                root.shared-buffer-path = val;
+                                root.config-edited(root.listen-address, root.port, root.shared-buffer-path);
+                            }
+                        }
+                    }
+
+                    CheckBox {
+                        text: "ADB Reverse Port on server startup";
+                        enabled: root.adb-found;
+                        checked: root.auto-adb;
+                        toggled => {
+                            root.auto-adb = self.checked;
+                            root.config-edited(root.listen-address, root.port, root.shared-buffer-path);
+                        }
+                    }
+
+                    CheckBox {
+                        text: "Minimize UI on startup";
+                        checked: root.minimize-on-startup;
+                        toggled => {
+                            root.minimize-on-startup = self.checked;
+                            root.config-edited(root.listen-address, root.port, root.shared-buffer-path);
+                        }
+                    }
+
+                    Button {
+                        accessible-expandable: false;
+                        accessible-role: AccessibleRole.button;
+                        primary: true;
+                        enabled: root.config-valid;
+                        text: "Apply and restart server";
+                        width: 280px;
+                        clicked => { root.apply-clicked(root.listen-address, root.port, root.shared-buffer-path); }
                     }
                 }
+            }
+
+            VerticalLayout {
+                spacing: 24px;
+                width: 350px;
+                alignment: start;
 
                 VerticalLayout {
                     spacing: 12px;
                     Text {
-                        text: "Connected device";
+                        text: "Connected devices";
                         font-size: 20px;
                         font-weight: 700;
                         color: Palette.foreground;
@@ -127,35 +236,56 @@ export component MainWindow inherits Window {
 
                     VerticalLayout {
                         spacing: 6px;
-                        if root.phone-name == "": Text {
-                            text: "Please connect your Android™ device first!\nYou can use the \"Forward port to Android™ device (ADB)\" button below to forward the server port to your Android™ device via ADB if you have it installed.\nYou also can connect using network if your Android™ device and PC are on the same network (not recommended if using wireless network).";
-                            font-size: 14px;
+                        if root.connected-devices.length == 0: Text {
+                            text: "Please connect your Android™ device first!\n\nYou can use the \"Reverse port to Android™ device (ADB)\" button below to forward the server port to your Android™ device via ADB if you have it installed.\n\nYou also can connect using network if your Android™ device and PC are on the same network (not recommended if using wireless network).";
+                            font-size: 13px;
                             color: Palette.foreground;
                             wrap: word-wrap;
                         }
 
-                        if root.phone-name != "": Text {
-                            text: root.phone-name + " - Android " + root.major-version;
-                            font-size: 14px;
-                            color: Palette.foreground;
-                            wrap: word-wrap;
-                        }
+                        if root.connected-devices.length > 0: ScrollView {
+                            height: 270px;
+                            VerticalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                for device in root.connected-devices: Rectangle {
+                                    background: Palette.control-background;
+                                    border-radius: 6px;
 
-                        if root.phone-name != "": Text {
-                            text: "Client version: " + root.client-ver;
-                            font-size: 14px;
-                            color: Palette.foreground;
-                        }
-                    }
+                                    HorizontalLayout {
+                                        alignment: space-between;
+                                        padding: 4px;
+                                        VerticalLayout {
+                                            alignment: center;
+                                            Text {
+                                                text: device.name;
+                                                font-size: 13px;
+                                                font-weight: 700;
+                                                color: Palette.foreground;
+                                            }
 
-                    if root.phone-name != "": Button {
-                        text: "Recalibrate";
-                        width: 350px;
-                        clicked => { root.recalibrate-clicked(); }
+                                            Text {
+                                                text: device.ip;
+                                                font-size: 12px;
+                                                color: Palette.foreground;
+                                                opacity: 0.8;
+                                            }
+                                        }
+
+                                        Button {
+                                            text: "Recalibrate";
+                                            clicked => {
+                                                root.recalibrate-clicked(device.id);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     Button {
-                        text: root.adb-found ? "Forward port to Android™ device (ADB)" : "Please install ADB first!";
+                        text: root.adb-found ? "Reverse port to Android™ device (ADB)" : "Please install ADB first!";
                         enabled: root.adb-found;
                         width: 350px;
                         clicked => { root.forward-port-clicked(); }
@@ -176,7 +306,7 @@ export component MainWindow inherits Window {
                 }
 
                 VerticalLayout {
-                    padding-left: 24px;
+                    padding-left: 16px;
                     spacing: 8px;
 
                     for state[i] in root.sensor-states: SensorBox {
@@ -194,7 +324,7 @@ export component MainWindow inherits Window {
             Text {
                 text: "sensorithm server v" + root.server-ver + " by michioxd - ";
                 color: Palette.foreground;
-                font-size: 13px;
+                font-size: 12px;
                 vertical-alignment: center;
                 opacity: 0.8;
             }
@@ -207,7 +337,7 @@ export component MainWindow inherits Window {
                     text: "GitHub";
                     color: Palette.accent-background;
                     opacity: parent.has-hover ? 0.8 : 1.0;
-                    font-size: 13px;
+                    font-size: 12px;
                     vertical-alignment: bottom; // lol idk
                 }
             }
