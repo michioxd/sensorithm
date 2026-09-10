@@ -1,6 +1,5 @@
 use slint::{ModelRc, VecModel};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
@@ -9,7 +8,6 @@ use uuid::Uuid;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 use serde::Deserialize;
-
 #[derive(Deserialize, Debug)]
 struct ClientInfo {
     name: String,
@@ -20,9 +18,10 @@ struct ClientInfo {
 #[cfg(windows)]
 use windows::{
     core::PCSTR,
-    Win32::Foundation::{CloseHandle, HANDLE},
+    Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE},
     Win32::System::Memory::{
-        MapViewOfFile, OpenFileMappingA, UnmapViewOfFile, FILE_MAP_READ, FILE_MAP_WRITE,
+        CreateFileMappingA, MapViewOfFile, OpenFileMappingA, UnmapViewOfFile,
+        FILE_MAP_ALL_ACCESS, PAGE_READWRITE,
     },
 };
 
@@ -30,9 +29,9 @@ use windows::{
 #[cfg(windows)]
 const BROKENITHM_MAPPING_NAME: &str = r"Local\BROKENITHM_SHARED_BUFFER";
 #[cfg(windows)]
-const BROKENITHM_BUFFER_SIZE: usize = 0x88;
+const BROKENITHM_BUFFER_SIZE: usize = 1024;
 #[cfg(windows)]
-const IR_MAP: [usize; 6] = [5, 4, 3, 2, 1, 0];
+const BROKENITHM_AIR_INDEX: [usize; 6] = [4, 5, 2, 3, 0, 1];
 
 #[cfg(windows)]
 struct BrokenithmSharedBuffer {
@@ -71,25 +70,46 @@ impl BrokenithmSharedBuffer {
         }
         self.last_open_attempt = Some(now);
 
-        let name_cstr = std::ffi::CString::new(self.mapping_name.as_str()).unwrap();
+        let name_cstr = match std::ffi::CString::new(self.mapping_name.as_str()) {
+            Ok(name) => name,
+            Err(e) => {
+                eprintln!("Invalid shared buffer name: {e}");
+                return false;
+            }
+        };
         let handle = unsafe {
             OpenFileMappingA(
-                FILE_MAP_READ.0 | FILE_MAP_WRITE.0,
+                FILE_MAP_ALL_ACCESS.0,
                 false,
                 PCSTR(name_cstr.as_ptr() as *const u8),
             )
-        };
+        }
+        .or_else(|_| unsafe {
+            CreateFileMappingA(
+                INVALID_HANDLE_VALUE,
+                None,
+                PAGE_READWRITE,
+                0,
+                BROKENITHM_BUFFER_SIZE as u32,
+                PCSTR(name_cstr.as_ptr() as *const u8),
+            )
+        });
 
         let handle = match handle {
             Ok(h) if !h.is_invalid() => h,
+            Err(e) => {
+                eprintln!("Cannot open/create shared buffer {}: {e}", self.mapping_name);
+                return false;
+            }
             _ => return false,
         };
 
         let view = unsafe {
-            MapViewOfFile(handle, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, BROKENITHM_BUFFER_SIZE)
+            MapViewOfFile(handle, FILE_MAP_ALL_ACCESS, 0, 0, 0)
         };
 
         if view.Value.is_null() {
+            eprintln!("Cannot map shared buffer {}: {}", self.mapping_name, std::io::Error::last_os_error());
             unsafe { let _ = CloseHandle(handle); }
             return false;
         }
@@ -106,13 +126,9 @@ impl BrokenithmSharedBuffer {
         }
 
         let view = self.view.unwrap();
-        for i in 0..6usize {
-            unsafe { *view.add(i) = 0; }
-        }
-        for (zone_index, &beam_index) in IR_MAP.iter().enumerate() {
-            if (mask & (1 << zone_index)) != 0 {
-                unsafe { *view.add(beam_index ^ 1) = 1; }
-            }
+        for (sensor_index, &shared_index) in BROKENITHM_AIR_INDEX.iter().enumerate() {
+            let value = u8::from((mask & (1 << sensor_index)) != 0);
+            unsafe { std::ptr::write_volatile(view.add(shared_index), value); }
         }
         true
     }
@@ -120,7 +136,7 @@ impl BrokenithmSharedBuffer {
     fn close(&mut self) {
         if let Some(view) = self.view.take() {
             for i in 0..6usize {
-                unsafe { *view.add(i) = 0; }
+                unsafe { std::ptr::write_volatile(view.add(i), 0); }
             }
             unsafe { let _ = UnmapViewOfFile(windows::Win32::System::Memory::MEMORY_MAPPED_VIEW_ADDRESS { Value: view as *mut _ }); }
         }
@@ -181,7 +197,6 @@ pub async fn run_server(
     mut port_rx: watch::Receiver<Option<(String, u16, String)>>,
     mut cmd_rx: tokio::sync::mpsc::UnboundedReceiver<(String, String)>,
 ) {
-    let held_mask = Arc::new(AtomicU8::new(0));
     let client_masks: Arc<tokio::sync::Mutex<HashMap<String, u8>>> = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
     let client_cmd_txs: Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>> = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
 
@@ -247,14 +262,23 @@ pub async fn run_server(
             }
         };
 
+        let mut clients = tokio::task::JoinSet::new();
+        let mut refresh = tokio::time::interval(Duration::from_millis(4));
+        refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
+                _ = refresh.tick() => {
+                    let masks = client_masks.lock().await;
+                    if !masks.is_empty() {
+                        apply_mask(masks.values().fold(0, |acc, &m| acc | m));
+                    }
+                }
+                Some(_) = clients.join_next(), if !clients.is_empty() => {}
                 accept = listener.accept() => {
                     match accept {
                         Ok((stream, addr)) => {
                             println!("New connection: {}", addr);
                             let ui_clone = ui_handle.clone();
-                            let mask_clone = held_mask.clone();
                             let client_masks_clone = client_masks.clone();
                             
                             let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -267,8 +291,8 @@ pub async fn run_server(
                             
                             let txs_clone = client_cmd_txs.clone();
                             
-                            tokio::spawn(async move {
-                                handle_client(stream, ui_clone, mask_clone, client_masks_clone, client_id.clone(), rx).await;
+                            clients.spawn(async move {
+                                handle_client(stream, ui_clone, client_masks_clone, client_id.clone(), rx).await;
                                 
                                 let mut txs = txs_clone.lock().await;
                                 txs.remove(&client_id);
@@ -293,26 +317,37 @@ pub async fn run_server(
                 }
             }
         }
+
+        clients.abort_all();
+        while clients.join_next().await.is_some() {}
+        client_cmd_txs.lock().await.clear();
+        client_masks.lock().await.clear();
+        #[cfg(windows)]
+        if let Ok(mut buf) = get_brokenithm().lock() {
+            buf.close();
+        }
         
         let ui = ui_handle.clone();
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = ui.upgrade() {
                 ui.set_server_ok(false);
+                ui.set_connected_devices(ModelRc::from(Rc::new(VecModel::from(Vec::<crate::ConnectedDevice>::new()))));
+                ui.set_sensor_states(ModelRc::from(Rc::new(VecModel::from(vec![false; 6]))));
             }
         });
+        if port_rx.has_changed().is_err() {
+            break;
+        }
     }
 }
 
 async fn handle_client(
-    mut stream: TcpStream, 
+    stream: TcpStream,
     ui_handle: slint::Weak<crate::MainWindow>, 
-    held_mask: Arc<AtomicU8>,
     client_masks: Arc<tokio::sync::Mutex<HashMap<String, u8>>>,
     client_id: String,
     mut cmd_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
 ) {
-    let _ = stream.set_nodelay(true);
-    
     let client_ip = stream.peer_addr().map(|addr| addr.ip().to_string()).unwrap_or_else(|_| "Unknown IP".into());
     
     let mut reader = tokio::io::BufReader::new(stream);
@@ -378,19 +413,13 @@ async fn handle_client(
                     Ok(_) => {
                         let mask = buf[0] & 0x3F;
                         
-                        {
+                        let combined_mask = {
                             let mut masks = client_masks.lock().await;
                             masks.insert(client_id.clone(), mask);
-                        }
-                        
-                        let combined_mask = {
-                            let masks = client_masks.lock().await;
-                            masks.values().fold(0, |acc, &m| acc | m)
+                            let combined = masks.values().fold(0, |acc, &m| acc | m);
+                            apply_mask(combined);
+                            combined
                         };
-                        
-                        held_mask.store(combined_mask, Ordering::SeqCst);
-
-                        apply_mask(combined_mask);
 
                         let ui_h = ui_handle.clone();
                         let _ = slint::invoke_from_event_loop(move || {
@@ -410,18 +439,13 @@ async fn handle_client(
         }
     }
 
-    {
+    let combined_mask = {
         let mut masks = client_masks.lock().await;
         masks.remove(&client_id);
-    }
-    
-    let combined_mask = {
-        let masks = client_masks.lock().await;
-        masks.values().fold(0, |acc, &m| acc | m)
+        let combined = masks.values().fold(0, |acc, &m| acc | m);
+        apply_mask(combined);
+        combined
     };
-    
-    held_mask.store(combined_mask, Ordering::SeqCst);
-    apply_mask(combined_mask);
 
     let cid = client_id.clone();
     let _ = slint::invoke_from_event_loop(move || {

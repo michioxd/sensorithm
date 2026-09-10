@@ -311,7 +311,7 @@ export component MainWindow inherits Window {
                     spacing: 8px;
 
                     for state[i] in root.sensor-states: SensorBox {
-                        index: i + 1;
+                        index: 6 - i;
                         active: state;
                     }
                 }

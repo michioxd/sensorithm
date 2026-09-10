@@ -14,7 +14,7 @@ class Client(
     private val onRecalibrate: () -> Unit
 ) {
     private var socket: Socket? = null
-    private var outputStream: OutputStream? = null
+    @Volatile private var outputStream: OutputStream? = null
     private var connectionThread: Thread? = null
 
     fun connect(ip: String, port: Int) {

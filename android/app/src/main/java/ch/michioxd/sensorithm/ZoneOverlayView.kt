@@ -209,7 +209,7 @@ class ZoneOverlayView @JvmOverloads constructor(
             canvas.drawRect(left, top, right, bottom, bgPaint)
             canvas.drawRect(left, top, right, bottom, borderPaint)
             
-            canvas.drawText((i + 1).toString(), cx, cy - textOffset, textPaint)
+            canvas.drawText((6 - i).toString(), cx, cy - textOffset, textPaint)
         }
         
         canvas.restore()

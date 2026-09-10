@@ -56,6 +56,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnChangeCamera: Button
     private lateinit var btnChangeRes: Button
     private lateinit var btnChangeFps: Button
+    private lateinit var btnRestartCamera: Button
     private lateinit var controlsLayout: android.widget.LinearLayout
 
     private lateinit var sbSizeX: SeekBar
@@ -101,6 +102,7 @@ class MainActivity : AppCompatActivity() {
     }
     
     private var backPressedTime: Long = 0
+    @Volatile private var lastSentMask: Byte = -1
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
@@ -123,6 +125,7 @@ class MainActivity : AppCompatActivity() {
         client = Client(
             appVersion = packageManager.getPackageInfo(packageName, 0).versionName ?: "Unknown",
             onConnected = { serverVersion ->
+                lastSentMask = -1
                 runOnUiThread {
                     isConnected = true
                     isConnecting = false
@@ -203,6 +206,7 @@ class MainActivity : AppCompatActivity() {
         btnChangeCamera = findViewById(R.id.btnChangeCamera)
         btnChangeRes = findViewById(R.id.btnChangeRes)
         btnChangeFps = findViewById(R.id.btnChangeFps)
+        btnRestartCamera = findViewById(R.id.btnRestartCamera)
         controlsLayout = findViewById(R.id.controlsLayout)
 
         sbSizeX = findViewById(R.id.sbSizeX)
@@ -290,6 +294,10 @@ class MainActivity : AppCompatActivity() {
         
         btnChangeFps.setOnClickListener {
             showFpsSelectionDialog()
+        }
+
+        btnRestartCamera.setOnClickListener {
+            bindCamera()
         }
 
         val seekBarListener = object : SeekBar.OnSeekBarChangeListener {
@@ -590,7 +598,8 @@ class MainActivity : AppCompatActivity() {
 
                 if (buffer.isDirect) {
                     val mask = SensorithmJNI.processFrame(buffer, imageProxy.width, imageProxy.height, rowStride)
-                    if (mask != (-1).toByte()) {
+                    if (mask != (-1).toByte() && mask != lastSentMask) {
+                        lastSentMask = mask
                         client.sendMask(mask)
                         runOnUiThread {
                             overlayView.updateActiveMask(mask)
