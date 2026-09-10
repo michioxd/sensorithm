@@ -72,6 +72,12 @@ class ZoneOverlayView @JvmOverloads constructor(
     var activeMask: Byte = 0
 
     var onOffsetChanged: (() -> Unit)? = null
+    var onCameraBoundsChanged: ((left: Int, top: Int, right: Int, bottom: Int) -> Unit)? = null
+    
+    private var lastLeft = -1
+    private var lastTop = -1
+    private var lastRight = -1
+    private var lastBottom = -1
 
     fun updateParams(
         previewWidth: Int, previewHeight: Int,
@@ -167,6 +173,21 @@ class ZoneOverlayView @JvmOverloads constructor(
 
         val leftOffset = (width - scaledW) / 2f
         val topOffset = (height - scaledH) / 2f
+        
+        val leftBounds = leftOffset.toInt()
+        val topBounds = topOffset.toInt()
+        val rightBounds = (leftOffset + scaledW).toInt()
+        val bottomBounds = (topOffset + scaledH).toInt()
+        
+        if (leftBounds != lastLeft || topBounds != lastTop || rightBounds != lastRight || bottomBounds != lastBottom) {
+            lastLeft = leftBounds
+            lastTop = topBounds
+            lastRight = rightBounds
+            lastBottom = bottomBounds
+            post {
+                onCameraBoundsChanged?.invoke(leftBounds, topBounds, rightBounds, bottomBounds)
+            }
+        }
 
         canvas.save()
         

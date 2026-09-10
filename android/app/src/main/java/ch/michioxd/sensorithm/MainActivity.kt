@@ -46,6 +46,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var previewView: PreviewView
     private lateinit var overlayView: ZoneOverlayView
     private lateinit var tvWatermark: TextView
+    private lateinit var tvFps: TextView
     private lateinit var tvConnectionStatus: TextView
     private lateinit var etIp: EditText
     private lateinit var etPort: EditText
@@ -56,6 +57,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnChangeCamera: Button
     private lateinit var btnChangeRes: Button
     private lateinit var btnChangeFps: Button
+    private lateinit var btnToggleFlash: Button
     private lateinit var btnRestartCamera: Button
     private lateinit var controlsLayout: android.widget.LinearLayout
 
@@ -103,6 +105,9 @@ class MainActivity : AppCompatActivity() {
     
     private var backPressedTime: Long = 0
     @Volatile private var lastSentMask: Byte = -1
+
+    private var frameCount = 0
+    private var lastFpsTimestamp = System.currentTimeMillis()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
@@ -196,6 +201,7 @@ class MainActivity : AppCompatActivity() {
         previewView = findViewById(R.id.previewView)
         overlayView = findViewById(R.id.overlayView)
         tvWatermark = findViewById(R.id.tvWatermark)
+        tvFps = findViewById(R.id.tvFps)
         tvConnectionStatus = findViewById(R.id.tvConnectionStatus)
         etIp = findViewById(R.id.etIp)
         etPort = findViewById(R.id.etPort)
@@ -206,6 +212,7 @@ class MainActivity : AppCompatActivity() {
         btnChangeCamera = findViewById(R.id.btnChangeCamera)
         btnChangeRes = findViewById(R.id.btnChangeRes)
         btnChangeFps = findViewById(R.id.btnChangeFps)
+        btnToggleFlash = findViewById(R.id.btnToggleFlash)
         btnRestartCamera = findViewById(R.id.btnRestartCamera)
         controlsLayout = findViewById(R.id.controlsLayout)
 
@@ -233,6 +240,26 @@ class MainActivity : AppCompatActivity() {
 
         overlayView.onOffsetChanged = {
             updateZones()
+        }
+        
+        overlayView.onCameraBoundsChanged = { left, top, right, bottom ->
+            val parentWidth = overlayView.width
+            val parentHeight = overlayView.height
+            val rightOffset = parentWidth - right
+            val bottomOffset = parentHeight - bottom
+            
+            tvWatermark.translationX = -rightOffset.toFloat()
+            tvWatermark.translationY = -bottomOffset.toFloat()
+
+            val canvasWidth = right - left
+            val canvasHeight = bottom - top
+            val referenceDim = Math.min(parentWidth, parentHeight).toFloat()
+            val currentMinDim = Math.min(canvasWidth, canvasHeight).toFloat()
+            
+            if (referenceDim > 0) {
+                val scale = currentMinDim / referenceDim
+                tvWatermark.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14f * scale)
+            }
         }
     }
 
@@ -294,6 +321,15 @@ class MainActivity : AppCompatActivity() {
         
         btnChangeFps.setOnClickListener {
             showFpsSelectionDialog()
+        }
+
+        btnToggleFlash.setOnClickListener {
+            val hasFlash = currentCamera?.cameraInfo?.hasFlashUnit() == true
+            if (hasFlash) {
+                val torchState = currentCamera?.cameraInfo?.torchState?.value
+                val turnOn = torchState != androidx.camera.core.TorchState.ON
+                currentCamera?.cameraControl?.enableTorch(turnOn)
+            }
         }
 
         btnRestartCamera.setOnClickListener {
@@ -578,6 +614,17 @@ class MainActivity : AppCompatActivity() {
         }
         val imageAnalysis = analysisBuilder.build().also {
             it.setAnalyzer(analyzerExecutor) { imageProxy ->
+                val currentTime = System.currentTimeMillis()
+                frameCount++
+                if (currentTime - lastFpsTimestamp >= 500) {
+                    val fps = frameCount * 1000f / (currentTime - lastFpsTimestamp)
+                    runOnUiThread {
+                        tvFps.text = String.format("%.1f FPS", fps)
+                    }
+                    frameCount = 0
+                    lastFpsTimestamp = currentTime
+                }
+
                 val rotation = imageProxy.imageInfo.rotationDegrees
                 val isSwapped = rotation == 90 || rotation == 270
                 val rotatedWidth = if (isSwapped) imageProxy.height else imageProxy.width
@@ -613,6 +660,16 @@ class MainActivity : AppCompatActivity() {
         try {
             currentCamera = provider.bindToLifecycle(this, currentCameraSelector, preview, imageAnalysis)
             
+            val hasFlash = currentCamera?.cameraInfo?.hasFlashUnit() ?: false
+            btnToggleFlash.isEnabled = hasFlash
+            if (hasFlash) {
+                currentCamera?.cameraInfo?.torchState?.observe(this) { state ->
+                    btnToggleFlash.text = if (state == androidx.camera.core.TorchState.ON) "Flash: ON" else "Flash"
+                }
+            } else {
+                btnToggleFlash.text = "No Flash"
+            }
+
             currentCamera?.cameraInfo?.exposureState?.let { exposureState ->
                 val range = exposureState.exposureCompensationRange
                 val index = range.lower + ((sbExposure.progress / 100f) * (range.upper - range.lower)).toInt()
