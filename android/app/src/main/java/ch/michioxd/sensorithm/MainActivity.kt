@@ -418,7 +418,7 @@ class MainActivity : AppCompatActivity() {
         sbSizeY.progress = Config.getInt(this, "sizeY", 5)
         sbSpacing.progress = Config.getInt(this, "spacing", 10)
         sbAngle.progress = Config.getInt(this, "angle", 180)
-        sbExposure.progress = Config.getInt(this, "exposure", 50)
+        sbExposure.progress = Config.getInt(this, "exposure", 10)
         sbThreshold.progress = Config.getInt(this, "threshold", 30)
 
         val savedCameraId = Config.getString(this, "cameraId", "")
