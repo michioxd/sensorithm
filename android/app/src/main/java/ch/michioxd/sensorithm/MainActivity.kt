@@ -601,6 +601,13 @@ class MainActivity : AppCompatActivity() {
 
         try {
             currentCamera = provider.bindToLifecycle(this, currentCameraSelector, preview, imageAnalysis)
+            
+            currentCamera?.cameraInfo?.exposureState?.let { exposureState ->
+                val range = exposureState.exposureCompensationRange
+                val index = range.lower + ((sbExposure.progress / 100f) * (range.upper - range.lower)).toInt()
+                currentCamera?.cameraControl?.setExposureCompensationIndex(index)
+            }
+            SensorithmJNI.setThreshold(-1, sbThreshold.progress.toFloat())
         } catch (exc: Exception) {
             Log.e("Sensorithm", "Use case binding failed", exc)
         }
