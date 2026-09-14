@@ -206,7 +206,7 @@
                     android:id="@+id/sbSizeX"
                     android:layout_width="0dp"
                     android:layout_weight="1"
-                    android:max="50"
+                    android:max="100"
                     android:progress="15" />
 
                 <TextView

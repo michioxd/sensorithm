@@ -450,7 +450,7 @@ export component MainWindow inherits Window {
                             SettingSlider {
                                 label: "Width";
                                 value <=> root.sensor-size-x;
-                                maximum: 50;
+                                maximum: 100;
                                 enabled: root.client-connected;
                                 released => { root.settings-released(); }
                             }

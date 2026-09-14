@@ -17,7 +17,7 @@ data class SyncedSettings(
     val offsetY: Float,
 ) {
     fun isValid(): Boolean =
-        sizeX in 0..50 && sizeY in 0..50 && spacing in 0..100 && angle in 0..360 &&
+        sizeX in 0..100 && sizeY in 0..50 && spacing in 0..100 && angle in 0..360 &&
             exposure in 0..100 && threshold in 0..255 && offsetX in 0f..1f && offsetY in 0f..1f
 }
 

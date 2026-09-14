@@ -22,7 +22,7 @@ pub struct SyncedSettings {
 
 impl SyncedSettings {
     pub fn is_valid(&self) -> bool {
-        (0..=50).contains(&self.size_x)
+        (0..=100).contains(&self.size_x)
             && (0..=50).contains(&self.size_y)
             && (0..=100).contains(&self.spacing)
             && (0..=360).contains(&self.angle)
