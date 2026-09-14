@@ -13,6 +13,11 @@ Make sure you have [Brokenithm server](https://github.com/tindy2013/Brokenithm-A
 * **Server**: [`sensorithm-server.exe`](https://github.com/michioxd/sensorithm/releases/latest/download/sensorithm-server.exe) - Windows 64-bit only. The `.pdb` file is optional and only needed for debugging.
 * **Client**: [`app-release.apk`](https://github.com/michioxd/sensorithm/releases/latest/download/app-release.apk) - Android 5.0 or higher.
 
+## Recommended stack
+
+- Android device with camera as the Air sensor.
+- Another Android device or tablet (example [Windows Tablet PC](https://github.com/michioxd/BrokenithmWindows) or Android tablet) as slider.
+
 ## License
 
 [GPLv3](LICENSE)
