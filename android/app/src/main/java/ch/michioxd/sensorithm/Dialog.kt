@@ -1,5 +1,6 @@
 package ch.michioxd.sensorithm
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.ImageFormat
 import android.hardware.camera2.CameraCharacteristics
@@ -15,6 +16,7 @@ import androidx.camera.core.CameraInfo
 import androidx.camera.core.CameraSelector
 import androidx.camera.lifecycle.ProcessCameraProvider
 
+@SuppressLint("UnsafeOptInUsageError")
 object CameraDialogHelper {
 
     fun showCameraSelectionDialog(

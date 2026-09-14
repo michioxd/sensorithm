@@ -4,8 +4,6 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Bundle
-import android.util.Log
-import android.util.Size
 import android.view.WindowManager
 import android.view.GestureDetector
 import android.view.MotionEvent
@@ -16,32 +14,21 @@ import android.widget.EditText
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
-import android.os.Handler
-import android.os.Looper
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
-import androidx.camera.core.Camera
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.Preview
-import androidx.camera.core.resolutionselector.ResolutionSelector
-import androidx.camera.core.resolutionselector.ResolutionStrategy
-import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import java.io.OutputStream
-import java.net.Socket
-import kotlin.concurrent.thread
-
-import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var client: Client
-    private val analyzerExecutor = Executors.newSingleThreadExecutor()
+    private lateinit var connectionManager: ConnectionManager
+    private lateinit var configRepository: ConfigRepository
+    private lateinit var cameraController: CameraController
+    private lateinit var initialConfig: AppConfig
+    private val sensorProcessor = SensorProcessor()
 
     private lateinit var previewView: PreviewView
     private lateinit var overlayView: ZoneOverlayView
@@ -75,45 +62,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvExposureValue: TextView
     private lateinit var tvThresholdValue: TextView
 
-    private var previewWidth = 0
-    private var previewHeight = 0
-    private var rawWidth = 0
-    private var rawHeight = 0
-    private var imageRotation = 0
-    
-    private var cameraProvider: ProcessCameraProvider? = null
-    private var currentCamera: Camera? = null
-    private var currentCameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-    private var currentResolution: Size? = null
-    private var currentFpsRange: android.util.Range<Int>? = null
-
-    private var isConnected = false
-    private var isConnecting = false
-    private val connectionHandler = Handler(Looper.getMainLooper())
-    private val connectionTimeoutRunnable = Runnable {
-        if (isConnecting && !isConnected) {
-            Toast.makeText(this@MainActivity, "Connection timeout", Toast.LENGTH_SHORT).show()
-            disconnect()
-        }
-    }
-    
-    private val reconnectRunnable = Runnable {
-        if (cbAutoReconnect.isChecked && !isConnected && !isConnecting) {
-            connect()
-        }
-    }
-    
     private var backPressedTime: Long = 0
-    @Volatile private var lastSentMask: Byte = -1
-
-    private var frameCount = 0
-    private var lastFpsTimestamp = System.currentTimeMillis()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_main)
+        configRepository = ConfigRepository(this)
         
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -127,43 +83,39 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        client = Client(
+        connectionManager = ConnectionManager(
             appVersion = packageManager.getPackageInfo(packageName, 0).versionName ?: "Unknown",
-            onConnected = { serverVersion ->
-                lastSentMask = -1
-                runOnUiThread {
-                    isConnected = true
-                    isConnecting = false
-                    connectionHandler.removeCallbacks(connectionTimeoutRunnable)
-                    tvConnectionStatus.text = "Connected - v$serverVersion"
-                    tvConnectionStatus.setTextColor(Color.GREEN)
-                    btnConnect.isEnabled = true
-                    btnConnect.text = "Disconnect"
+            autoReconnectEnabled = { cbAutoReconnect.isChecked },
+            onStateChanged = { state ->
+                renderConnectionState(state)
+                if (state is ConnectionState.Connected) {
+                    sensorProcessor.resetOutput()
                     saveConfigs()
                 }
             },
-            onDisconnected = { e ->
-                runOnUiThread {
-                    isConnected = false
-                    isConnecting = false
-                    tvConnectionStatus.setText(R.string.disconnected)
-                    tvConnectionStatus.setTextColor(Color.RED)
-                    btnConnect.isEnabled = true
-                    btnConnect.text = "Connect"
-                    if (cbAutoReconnect.isChecked) {
-                        connectionHandler.postDelayed(reconnectRunnable, 3000) // retry after 3 seconds
-                    }
-                }
+            onConnectionTimeout = {
+                Toast.makeText(this, "Connection timeout", Toast.LENGTH_SHORT).show()
             },
             onRecalibrate = {
-                SensorithmJNI.recalibrate()
-                runOnUiThread {
-                    Toast.makeText(this@MainActivity, "Recalibrated by server", Toast.LENGTH_SHORT).show()
-                }
-            }
+                sensorProcessor.recalibrate()
+                Toast.makeText(this, "Recalibrated by server", Toast.LENGTH_SHORT).show()
+            },
         )
 
         initViews()
+        cameraController = CameraController(
+            context = this,
+            lifecycleOwner = this,
+            previewView = previewView,
+            sensorProcessor = sensorProcessor,
+            onFrameGeometryChanged = { updateZones() },
+            onFpsChanged = { fps -> tvFps.text = String.format("%.1f FPS", fps) },
+            onSensorMask = connectionManager::sendMask,
+            onSensorMaskForDisplay = overlayView::updateActiveMask,
+            onTorchChanged = ::renderTorchState,
+            onCameraError = { exception -> android.util.Log.e("Sensorithm", "Camera operation failed", exception) },
+        )
+        cameraController.restoreConfig(initialConfig.camera)
         setupListeners()
         
         if (cbAutoConnectOnStartup.isChecked) {
@@ -264,39 +216,42 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun connect() {
-        if (isConnected || isConnecting) return
-        
         val ip = etIp.text.toString()
-        val port = etPort.text.toString().toIntOrNull() ?: 8080
-        
-        isConnecting = true
-        btnConnect.isEnabled = false
-        btnConnect.text = "Connecting..."
-        tvConnectionStatus.text = "Connecting..."
-        tvConnectionStatus.setTextColor(Color.YELLOW)
-        
+        val port = etPort.text.toString().toIntOrNull() ?: CONNECT_FALLBACK_PORT
         saveConfigs()
-        client.connect(ip, port)
-        
-        connectionHandler.removeCallbacks(connectionTimeoutRunnable)
-        connectionHandler.postDelayed(connectionTimeoutRunnable, 10000)
+        connectionManager.connect(ip, port)
     }
     
     private fun disconnect() {
-        connectionHandler.removeCallbacks(connectionTimeoutRunnable)
-        connectionHandler.removeCallbacks(reconnectRunnable)
-        client.disconnect()
-        isConnected = false
-        isConnecting = false
-        tvConnectionStatus.setText(R.string.disconnected)
-        tvConnectionStatus.setTextColor(Color.RED)
-        btnConnect.isEnabled = true
-        btnConnect.text = "Connect"
+        connectionManager.disconnect()
+    }
+
+    private fun renderConnectionState(state: ConnectionState) {
+        when (state) {
+            ConnectionState.Disconnected -> {
+                tvConnectionStatus.setText(R.string.disconnected)
+                tvConnectionStatus.setTextColor(Color.RED)
+                btnConnect.isEnabled = true
+                btnConnect.text = "Connect"
+            }
+            ConnectionState.Connecting -> {
+                tvConnectionStatus.text = "Connecting..."
+                tvConnectionStatus.setTextColor(Color.YELLOW)
+                btnConnect.isEnabled = false
+                btnConnect.text = "Connecting..."
+            }
+            is ConnectionState.Connected -> {
+                tvConnectionStatus.text = "Connected - v${state.serverVersion}"
+                tvConnectionStatus.setTextColor(Color.GREEN)
+                btnConnect.isEnabled = true
+                btnConnect.text = "Disconnect"
+            }
+        }
     }
 
     private fun setupListeners() {
         btnConnect.setOnClickListener {
-            if (isConnected || isConnecting) {
+            if (connectionManager.state != ConnectionState.Disconnected) {
                 cbAutoReconnect.isChecked = false
                 saveConfigs()
                 disconnect()
@@ -308,7 +263,7 @@ class MainActivity : AppCompatActivity() {
         cbAutoReconnect.setOnCheckedChangeListener { _, _ -> saveConfigs() }
         cbAutoConnectOnStartup.setOnCheckedChangeListener { _, _ -> saveConfigs() }
         btnRecalibrate.setOnClickListener {
-            SensorithmJNI.recalibrate()
+            sensorProcessor.recalibrate()
         }
         
         btnChangeCamera.setOnClickListener {
@@ -324,16 +279,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnToggleFlash.setOnClickListener {
-            val hasFlash = currentCamera?.cameraInfo?.hasFlashUnit() == true
-            if (hasFlash) {
-                val torchState = currentCamera?.cameraInfo?.torchState?.value
-                val turnOn = torchState != androidx.camera.core.TorchState.ON
-                currentCamera?.cameraControl?.enableTorch(turnOn)
-            }
+            cameraController.toggleTorch()
         }
 
         btnRestartCamera.setOnClickListener {
-            bindCamera()
+            cameraController.restart()
         }
 
         val seekBarListener = object : SeekBar.OnSeekBarChangeListener {
@@ -355,11 +305,7 @@ class MainActivity : AppCompatActivity() {
         sbExposure.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 tvExposureValue.text = "$progress"
-                currentCamera?.cameraInfo?.exposureState?.let { exposureState ->
-                    val range = exposureState.exposureCompensationRange
-                    val index = range.lower + ((progress / 100f) * (range.upper - range.lower)).toInt()
-                    currentCamera?.cameraControl?.setExposureCompensationIndex(index)
-                }
+                cameraController.setExposure(progress)
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
@@ -371,7 +317,7 @@ class MainActivity : AppCompatActivity() {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 tvThresholdValue.text = "$progress"
                 val threshold = progress.toFloat()
-                SensorithmJNI.setThreshold(-1, threshold)
+                sensorProcessor.setThreshold(threshold)
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
@@ -409,78 +355,33 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadConfigs() {
-        etIp.setText(Config.getString(this, "ip", "127.0.0.1"))
-        etPort.setText(Config.getInt(this, "port", 4420).toString())
-        cbAutoReconnect.isChecked = Config.getBoolean(this, "autoReconnect", false)
-        cbAutoConnectOnStartup.isChecked = Config.getBoolean(this, "autoConnectOnStartup", false)
+        val config = configRepository.load().also { initialConfig = it }
+        etIp.setText(config.serverAddress)
+        etPort.setText(config.serverPort.toString())
+        cbAutoReconnect.isChecked = config.autoReconnect
+        cbAutoConnectOnStartup.isChecked = config.autoConnectOnStartup
         
-        sbSizeX.progress = Config.getInt(this, "sizeX", 15)
-        sbSizeY.progress = Config.getInt(this, "sizeY", 5)
-        sbSpacing.progress = Config.getInt(this, "spacing", 10)
-        sbAngle.progress = Config.getInt(this, "angle", 180)
-        sbExposure.progress = Config.getInt(this, "exposure", 10)
-        sbThreshold.progress = Config.getInt(this, "threshold", 30)
+        sbSizeX.progress = config.zones.sizePercentX
+        sbSizeY.progress = config.zones.sizePercentY
+        sbSpacing.progress = config.zones.spacingPercent
+        sbAngle.progress = config.zones.angleDegrees
+        sbExposure.progress = config.exposure
+        sbThreshold.progress = config.zones.threshold
 
-        val savedCameraId = Config.getString(this, "cameraId", "")
-        if (savedCameraId.isNotEmpty()) {
-            currentCameraSelector = CameraSelector.Builder().addCameraFilter { cameras ->
-                val matching = cameras.filter { camInfo ->
-                    try {
-                        androidx.camera.camera2.interop.Camera2CameraInfo.from(camInfo).cameraId == savedCameraId
-                    } catch (e: Exception) {
-                        false
-                    }
-                }
-                if (matching.isNotEmpty()) matching else cameras
-            }.build()
-        }
-
-        val resW = Config.getInt(this, "resW", 0)
-        val resH = Config.getInt(this, "resH", 0)
-        if (resW > 0 && resH > 0) {
-            currentResolution = Size(resW, resH)
-        }
-
-        val fpsL = Config.getInt(this, "fpsL", 0)
-        val fpsU = Config.getInt(this, "fpsU", 0)
-        if (fpsL > 0 && fpsU > 0) {
-            currentFpsRange = android.util.Range(fpsL, fpsU)
-        }
     }
     
     private fun saveConfigs() {
-        Config.saveString(this, "ip", etIp.text.toString())
-        Config.saveInt(this, "port", etPort.text.toString().toIntOrNull() ?: 4420)
-        Config.saveBoolean(this, "autoReconnect", cbAutoReconnect.isChecked)
-        Config.saveBoolean(this, "autoConnectOnStartup", cbAutoConnectOnStartup.isChecked)
-        
-        Config.saveInt(this, "sizeX", sbSizeX.progress)
-        Config.saveInt(this, "sizeY", sbSizeY.progress)
-        Config.saveInt(this, "spacing", sbSpacing.progress)
-        Config.saveInt(this, "angle", sbAngle.progress)
-        Config.saveInt(this, "exposure", sbExposure.progress)
-        Config.saveInt(this, "threshold", sbThreshold.progress)
-
-        currentCamera?.cameraInfo?.let { camInfo ->
-            try {
-                val cameraId = androidx.camera.camera2.interop.Camera2CameraInfo.from(camInfo).cameraId
-                Config.saveString(this, "cameraId", cameraId)
-            } catch (e: Exception) {}
-        }
-        currentResolution?.let {
-            Config.saveInt(this, "resW", it.width)
-            Config.saveInt(this, "resH", it.height)
-        } ?: run {
-            Config.saveInt(this, "resW", 0)
-            Config.saveInt(this, "resH", 0)
-        }
-        currentFpsRange?.let {
-            Config.saveInt(this, "fpsL", it.lower)
-            Config.saveInt(this, "fpsU", it.upper)
-        } ?: run {
-            Config.saveInt(this, "fpsL", 0)
-            Config.saveInt(this, "fpsU", 0)
-        }
+        configRepository.save(
+            AppConfig(
+                serverAddress = etIp.text.toString(),
+                serverPort = etPort.text.toString().toIntOrNull() ?: AppConfig.DEFAULT_SERVER_PORT,
+                autoReconnect = cbAutoReconnect.isChecked,
+                autoConnectOnStartup = cbAutoConnectOnStartup.isChecked,
+                zones = currentZoneSettings(),
+                exposure = sbExposure.progress,
+                camera = cameraController.config(),
+            ),
+        )
     }
 
     private fun updateLabels() {
@@ -491,204 +392,76 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateZones() {
-        if (previewWidth == 0 || previewHeight == 0) return
+        val frame = cameraController.frameGeometry ?: return
 
-        val sensorSizeX = (sbSizeX.progress / 100f * previewWidth).toInt().coerceAtLeast(1)
-        val sensorSizeY = (sbSizeY.progress / 100f * previewHeight).toInt().coerceAtLeast(1)
-        val distance = (sbSpacing.progress / 100f * previewHeight).toInt()
-        val threshold = sbThreshold.progress.toFloat()
-        
-        val angle = sbAngle.progress
-        
-        val pixelOffsetX = ((overlayView.offsetX - 0.5f) * previewWidth).toInt()
-        val pixelOffsetY = ((overlayView.offsetY - 0.5f) * previewHeight).toInt()
-
-        overlayView.updateParams(previewWidth, previewHeight, pixelOffsetX, pixelOffsetY, sensorSizeX, sensorSizeY, distance, angle)
-
-        val configs = IntArray(24)
-        val rawSizeX = if (imageRotation == 90 || imageRotation == 270) sensorSizeY else sensorSizeX
-        val rawSizeY = if (imageRotation == 90 || imageRotation == 270) sensorSizeX else sensorSizeY
-        
-        val rad = Math.toRadians((angle - 180).toDouble())
-        val dx = Math.sin(rad).toFloat()
-        val dy = Math.cos(rad).toFloat()
-
-        for (i in 0 until 6) {
-            val cx = (previewWidth / 2f + pixelOffsetX + (i - 2.5f) * distance * dx).toInt()
-            val cy = (previewHeight / 2f + pixelOffsetY + (i - 2.5f) * distance * dy).toInt()
-            
-            val rawX: Int
-            val rawY: Int
-            when (imageRotation) {
-                90 -> {
-                    rawX = cy
-                    rawY = rawHeight - 1 - cx
-                }
-                180 -> {
-                    rawX = rawWidth - 1 - cx
-                    rawY = rawHeight - 1 - cy
-                }
-                270 -> {
-                    rawX = rawWidth - 1 - cy
-                    rawY = cx
-                }
-                else -> {
-                    rawX = cx
-                    rawY = cy
-                }
-            }
-            
-            configs[i * 4 + 0] = rawX
-            configs[i * 4 + 1] = rawY
-            configs[i * 4 + 2] = rawSizeX
-            configs[i * 4 + 3] = rawSizeY
-        }
-        
-        SensorithmJNI.setAirConfig(configs)
+        val settings = currentZoneSettings()
+        val layout = SensorZoneLayoutCalculator.calculate(
+            frame,
+            settings,
+            overlayView.offsetX,
+            overlayView.offsetY,
+        )
+        overlayView.updateLayout(frame.previewWidth, frame.previewHeight, layout, settings.angleDegrees)
+        sensorProcessor.configureZones(layout.nativeConfig)
     }
 
+    private fun currentZoneSettings() = ZoneSettings(
+        sizePercentX = sbSizeX.progress,
+        sizePercentY = sbSizeY.progress,
+        spacingPercent = sbSpacing.progress,
+        angleDegrees = sbAngle.progress,
+        threshold = sbThreshold.progress,
+    )
+
     private fun showCameraSelectionDialog() {
-        CameraDialogHelper.showCameraSelectionDialog(this, cameraProvider, currentCamera?.cameraInfo) { info ->
-            currentCameraSelector = CameraSelector.Builder().addCameraFilter { it.filter { camInfo -> camInfo == info } }.build()
-            currentResolution = null
-            currentFpsRange = null
+        CameraDialogHelper.showCameraSelectionDialog(this, cameraController.provider, cameraController.camera?.cameraInfo) { info ->
+            cameraController.selectCamera(info)
             saveConfigs()
-            bindCamera()
         }
     }
     
     private fun showResolutionSelectionDialog() {
-        CameraDialogHelper.showResolutionSelectionDialog(this, currentCamera, currentResolution) { size ->
-            currentResolution = size
+        CameraDialogHelper.showResolutionSelectionDialog(this, cameraController.camera, cameraController.resolution) { size ->
+            cameraController.selectResolution(size)
             saveConfigs()
-            bindCamera()
         }
     }
     
     private fun showFpsSelectionDialog() {
-        CameraDialogHelper.showFpsSelectionDialog(this, currentCamera, currentFpsRange) { range ->
-            currentFpsRange = range
+        CameraDialogHelper.showFpsSelectionDialog(this, cameraController.camera, cameraController.fpsRange) { range ->
+            cameraController.selectFps(range)
             saveConfigs()
-            bindCamera()
         }
     }
 
     private fun startCamera() {
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
-        cameraProviderFuture.addListener({
-            cameraProvider = cameraProviderFuture.get()
-            bindCamera()
-        }, ContextCompat.getMainExecutor(this))
+        cameraController.setExposure(sbExposure.progress)
+        sensorProcessor.setThreshold(sbThreshold.progress.toFloat())
+        cameraController.start(initialConfig.camera)
     }
-    
-    private fun bindCamera() {
-        val provider = cameraProvider ?: return
-        provider.unbindAll()
 
-        var resSelector: ResolutionSelector? = null
-        currentResolution?.let {
-            resSelector = ResolutionSelector.Builder()
-                .setResolutionStrategy(ResolutionStrategy(it, ResolutionStrategy.FALLBACK_RULE_NONE))
-                .build()
-        }
-
-        val previewBuilder = Preview.Builder()
-        resSelector?.let { previewBuilder.setResolutionSelector(it) }
-        currentFpsRange?.let {
-            val extender = androidx.camera.camera2.interop.Camera2Interop.Extender(previewBuilder)
-            extender.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it)
-            // high fps
-            extender.setCaptureRequestTemplate(android.hardware.camera2.CameraDevice.TEMPLATE_RECORD)
-        }
-        val preview = previewBuilder.build().also {
-            it.setSurfaceProvider(previewView.surfaceProvider)
-        }
-
-        val analysisBuilder = ImageAnalysis.Builder()
-            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-        resSelector?.let { analysisBuilder.setResolutionSelector(it) }
-        currentFpsRange?.let {
-            val extender = androidx.camera.camera2.interop.Camera2Interop.Extender(analysisBuilder)
-            extender.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it)
-            extender.setCaptureRequestTemplate(android.hardware.camera2.CameraDevice.TEMPLATE_RECORD)
-        }
-        val imageAnalysis = analysisBuilder.build().also {
-            it.setAnalyzer(analyzerExecutor) { imageProxy ->
-                val currentTime = System.currentTimeMillis()
-                frameCount++
-                if (currentTime - lastFpsTimestamp >= 500) {
-                    val fps = frameCount * 1000f / (currentTime - lastFpsTimestamp)
-                    runOnUiThread {
-                        tvFps.text = String.format("%.1f FPS", fps)
-                    }
-                    frameCount = 0
-                    lastFpsTimestamp = currentTime
-                }
-
-                val rotation = imageProxy.imageInfo.rotationDegrees
-                val isSwapped = rotation == 90 || rotation == 270
-                val rotatedWidth = if (isSwapped) imageProxy.height else imageProxy.width
-                val rotatedHeight = if (isSwapped) imageProxy.width else imageProxy.height
-
-                if (previewWidth != rotatedWidth || previewHeight != rotatedHeight || imageRotation != rotation) {
-                    previewWidth = rotatedWidth
-                    previewHeight = rotatedHeight
-                    rawWidth = imageProxy.width
-                    rawHeight = imageProxy.height
-                    imageRotation = rotation
-                    updateZones()
-                }
-
-                val yPlane = imageProxy.planes[0]
-                val buffer = yPlane.buffer
-                val rowStride = yPlane.rowStride
-
-                if (buffer.isDirect) {
-                    val mask = SensorithmJNI.processFrame(buffer, imageProxy.width, imageProxy.height, rowStride)
-                    if (mask != (-1).toByte() && mask != lastSentMask) {
-                        lastSentMask = mask
-                        client.sendMask(mask)
-                        runOnUiThread {
-                            overlayView.updateActiveMask(mask)
-                        }
-                    }
-                }
-                imageProxy.close()
-            }
-        }
-
-        try {
-            currentCamera = provider.bindToLifecycle(this, currentCameraSelector, preview, imageAnalysis)
-            
-            val hasFlash = currentCamera?.cameraInfo?.hasFlashUnit() ?: false
-            btnToggleFlash.isEnabled = hasFlash
-            if (hasFlash) {
-                currentCamera?.cameraInfo?.torchState?.observe(this) { state ->
-                    btnToggleFlash.text = if (state == androidx.camera.core.TorchState.ON) "Flash: ON" else "Flash"
-                }
-            } else {
+    private fun renderTorchState(state: CameraController.TorchUiState) {
+        when (state) {
+            CameraController.TorchUiState.Unavailable -> {
+                btnToggleFlash.isEnabled = false
                 btnToggleFlash.text = "No Flash"
             }
-
-            currentCamera?.cameraInfo?.exposureState?.let { exposureState ->
-                val range = exposureState.exposureCompensationRange
-                val index = range.lower + ((sbExposure.progress / 100f) * (range.upper - range.lower)).toInt()
-                currentCamera?.cameraControl?.setExposureCompensationIndex(index)
+            is CameraController.TorchUiState.Available -> {
+                btnToggleFlash.isEnabled = true
+                btnToggleFlash.text = if (state.enabled) "Flash: ON" else "Flash"
             }
-            SensorithmJNI.setThreshold(-1, sbThreshold.progress.toFloat())
-        } catch (exc: Exception) {
-            Log.e("Sensorithm", "Use case binding failed", exc)
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        client.disconnect()
-        analyzerExecutor.shutdown()
+        connectionManager.close()
+        cameraController.close()
     }
 
     companion object {
         private const val REQUEST_CODE_PERMISSIONS = 10
+        private const val CONNECT_FALLBACK_PORT = 8080
         private val REQUIRED_PERMISSIONS = arrayOf(Manifest.permission.CAMERA)
     }
 }

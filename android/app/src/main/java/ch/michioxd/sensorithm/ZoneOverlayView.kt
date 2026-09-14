@@ -66,10 +66,9 @@ class ZoneOverlayView @JvmOverloads constructor(
     var distance: Int = 40
     var angle: Int = 180
     
-    var pixelOffsetX: Int = 0
-    var pixelOffsetY: Int = 0
-    
     var activeMask: Byte = 0
+
+    private var zoneCenters: List<ZoneCenter> = emptyList()
 
     var onOffsetChanged: (() -> Unit)? = null
     var onCameraBoundsChanged: ((left: Int, top: Int, right: Int, bottom: Int) -> Unit)? = null
@@ -79,19 +78,14 @@ class ZoneOverlayView @JvmOverloads constructor(
     private var lastRight = -1
     private var lastBottom = -1
 
-    fun updateParams(
-        previewWidth: Int, previewHeight: Int,
-        pixelOffsetX: Int, pixelOffsetY: Int,
-        sensorSizeX: Int, sensorSizeY: Int, distance: Int, angle: Int
-    ) {
+    fun updateLayout(previewWidth: Int, previewHeight: Int, layout: ZoneLayout, angle: Int) {
         this.previewWidth = previewWidth
         this.previewHeight = previewHeight
-        this.pixelOffsetX = pixelOffsetX
-        this.pixelOffsetY = pixelOffsetY
-        this.sensorSizeX = sensorSizeX
-        this.sensorSizeY = sensorSizeY
-        this.distance = distance
+        this.sensorSizeX = layout.sensorWidth
+        this.sensorSizeY = layout.sensorHeight
+        this.distance = layout.spacing
         this.angle = angle
+        this.zoneCenters = layout.centers
         invalidate()
     }
     
@@ -191,22 +185,15 @@ class ZoneOverlayView @JvmOverloads constructor(
 
         canvas.save()
         
-        val rad = Math.toRadians((angle - 180).toDouble())
-        val dx = Math.sin(rad).toFloat()
-        val dy = Math.cos(rad).toFloat()
-
         val boxWidth = sensorSizeX * scale
         val boxHeight = sensorSizeY * scale
         val minDim = min(boxWidth, boxHeight)
         textPaint.textSize = minDim * 0.7f
         val textOffset = (textPaint.descent() + textPaint.ascent()) / 2f
 
-        for (i in 0 until 6) {
-            val rawX = (previewWidth / 2f + pixelOffsetX + (i - 2.5f) * distance * dx).toInt()
-            val rawY = (previewHeight / 2f + pixelOffsetY + (i - 2.5f) * distance * dy).toInt()
-            
-            val cx = leftOffset + rawX * scale
-            val cy = topOffset + rawY * scale
+        zoneCenters.forEachIndexed { i, center ->
+            val cx = leftOffset + center.x * scale
+            val cy = topOffset + center.y * scale
             
             val halfSizeX = boxWidth / 2f
             val halfSizeY = boxHeight / 2f

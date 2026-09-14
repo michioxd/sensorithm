@@ -2,8 +2,8 @@ pub fn show_error_dialog(title: &str, message: &str) {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
+        use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
         use windows::core::PCWSTR;
-        use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
 
         let title_wide: Vec<u16> = std::ffi::OsStr::new(title)
             .encode_wide()
@@ -32,12 +32,12 @@ pub fn show_error_dialog(title: &str, message: &str) {
 pub fn reverse_adb_port(port: u16) {
     std::thread::spawn(move || {
         println!("Forwarding port {} via ADB...", port);
-        
+
         let mut cmd = std::process::Command::new("adb");
         cmd.arg("reverse")
-           .arg(format!("tcp:{}", port))
-           .arg(format!("tcp:{}", port));
-           
+            .arg(format!("tcp:{}", port))
+            .arg(format!("tcp:{}", port));
+
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
