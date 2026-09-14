@@ -29,6 +29,26 @@ pub fn show_error_dialog(title: &str, message: &str) {
     }
 }
 
+pub fn show_low_battery_notification(battery_percent: u8, threshold: u8) {
+    #[cfg(windows)]
+    std::thread::spawn(move || {
+        use winrt_notification::Toast;
+
+        if let Err(error) = Toast::new(Toast::POWERSHELL_APP_ID)
+            .title("Sensorithm")
+            .text1(&format!(
+                "Client battery is below {threshold}% (currently {battery_percent}%). Please charge the device to avoid disconnection."
+            ))
+            .show()
+        {
+            eprintln!("Failed to show low battery notification: {error}");
+        }
+    });
+
+    #[cfg(not(windows))]
+    eprintln!("Client battery is below {threshold}% (currently {battery_percent}%).");
+}
+
 pub fn reverse_adb_port(port: u16) {
     std::thread::spawn(move || {
         println!("Forwarding port {} via ADB...", port);

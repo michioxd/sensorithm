@@ -7,6 +7,7 @@ pub const DEFAULT_ADDRESS: &str = "0.0.0.0";
 pub const EMPTY_ADDRESS_FALLBACK: &str = "127.0.0.1";
 pub const DEFAULT_PORT: u16 = 4420;
 pub const DEFAULT_SHARED_BUFFER_PATH: &str = r"Local\BROKENITHM_SHARED_BUFFER";
+pub const DEFAULT_PREVIEW_REFRESH_SECONDS: u32 = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ListenerConfig {
@@ -20,7 +21,19 @@ pub struct ServerConfig {
     pub listener: ListenerConfig,
     pub auto_adb: bool,
     pub minimize_on_startup: bool,
+    pub auto_refresh_preview: bool,
+    pub preview_refresh_seconds: u32,
+    pub disable_battery_low_warning: bool,
     pub window_position: Option<(i32, i32)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServerPreferences {
+    pub auto_adb: bool,
+    pub minimize_on_startup: bool,
+    pub auto_refresh_preview: bool,
+    pub preview_refresh_seconds: u32,
+    pub disable_battery_low_warning: bool,
 }
 
 impl ServerConfig {
@@ -28,8 +41,7 @@ impl ServerConfig {
         address: &str,
         port: &str,
         shared_buffer_path: &str,
-        auto_adb: bool,
-        minimize_on_startup: bool,
+        preferences: ServerPreferences,
     ) -> Self {
         Self {
             listener: ListenerConfig {
@@ -45,8 +57,11 @@ impl ServerConfig {
                     shared_buffer_path.to_owned()
                 },
             },
-            auto_adb,
-            minimize_on_startup,
+            auto_adb: preferences.auto_adb,
+            minimize_on_startup: preferences.minimize_on_startup,
+            auto_refresh_preview: preferences.auto_refresh_preview,
+            preview_refresh_seconds: preferences.preview_refresh_seconds.clamp(1, 5),
+            disable_battery_low_warning: preferences.disable_battery_low_warning,
             window_position: None,
         }
     }
@@ -59,6 +74,9 @@ pub fn load_config() -> ServerConfig {
     let mut path = DEFAULT_SHARED_BUFFER_PATH.to_string();
     let mut auto_adb = false;
     let mut minimize_on_startup = false;
+    let mut auto_refresh_preview = false;
+    let mut preview_refresh_seconds = DEFAULT_PREVIEW_REFRESH_SECONDS;
+    let mut disable_battery_low_warning = false;
     let mut window_pos = None;
 
     if let Ok(key) = hkcu.open_subkey(REGISTRY_PATH) {
@@ -80,6 +98,18 @@ pub fn load_config() -> ServerConfig {
             let min_u32: u32 = val;
             minimize_on_startup = min_u32 != 0;
         }
+        if let Ok(val) = key.get_value("auto_refresh_preview") {
+            let enabled: u32 = val;
+            auto_refresh_preview = enabled != 0;
+        }
+        if let Ok(val) = key.get_value("preview_refresh_seconds") {
+            let seconds: u32 = val;
+            preview_refresh_seconds = seconds.clamp(1, 5);
+        }
+        if let Ok(val) = key.get_value("disable_battery_low_warning") {
+            let disabled: u32 = val;
+            disable_battery_low_warning = disabled != 0;
+        }
         if let (Ok(x), Ok(y)) = (
             key.get_value::<u32, _>("window_x"),
             key.get_value::<u32, _>("window_y"),
@@ -95,6 +125,9 @@ pub fn load_config() -> ServerConfig {
         },
         auto_adb,
         minimize_on_startup,
+        auto_refresh_preview,
+        preview_refresh_seconds,
+        disable_battery_low_warning,
         window_position: window_pos,
     }
 }
@@ -109,6 +142,23 @@ pub fn save_config(config: &ServerConfig) {
         let _ = key.set_value(
             "minimize_on_startup",
             &(if config.minimize_on_startup {
+                1u32
+            } else {
+                0u32
+            }),
+        );
+        let _ = key.set_value(
+            "auto_refresh_preview",
+            &(if config.auto_refresh_preview {
+                1u32
+            } else {
+                0u32
+            }),
+        );
+        let _ = key.set_value("preview_refresh_seconds", &config.preview_refresh_seconds);
+        let _ = key.set_value(
+            "disable_battery_low_warning",
+            &(if config.disable_battery_low_warning {
                 1u32
             } else {
                 0u32
@@ -137,7 +187,18 @@ mod tests {
 
     #[test]
     fn empty_ui_values_use_existing_runtime_fallbacks() {
-        let config = ServerConfig::from_ui(" ", "invalid", "", true, false);
+        let config = ServerConfig::from_ui(
+            " ",
+            "invalid",
+            "",
+            ServerPreferences {
+                auto_adb: true,
+                minimize_on_startup: false,
+                auto_refresh_preview: true,
+                preview_refresh_seconds: 9,
+                disable_battery_low_warning: true,
+            },
+        );
         assert_eq!(config.listener.address, EMPTY_ADDRESS_FALLBACK);
         assert_eq!(config.listener.port, DEFAULT_PORT);
         assert_eq!(
@@ -146,6 +207,9 @@ mod tests {
         );
         assert!(config.auto_adb);
         assert!(!config.minimize_on_startup);
+        assert!(config.auto_refresh_preview);
+        assert_eq!(config.preview_refresh_seconds, 5);
+        assert!(config.disable_battery_low_warning);
     }
 
     #[test]

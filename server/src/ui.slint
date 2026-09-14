@@ -3,32 +3,64 @@ import {
     LineEdit,
     Palette,
     CheckBox,
+    ComboBox,
     ScrollView,
+    Slider,
 } from "std-widgets.slint";
 
-component SensorBox inherits HorizontalLayout {
+component SensorBox inherits Rectangle {
     in property <int> index;
     in property <bool> active;
+    width: 38px;
+    height: 38px;
+    border-radius: 5px;
+    border-width: 1px;
+    border-color: root.active ? Palette.accent-background : Palette.border;
+    background: root.active ? Palette.accent-background : Palette.control-background;
+    Text {
+        text: root.index;
+        color: Palette.foreground;
+        font-size: 15px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
 
-    spacing: 16px;
-    alignment: start;
+component SettingSlider inherits HorizontalLayout {
+    in property <string> label;
+    in-out property <float> value;
+    in property <float> maximum: 100;
+    in property <bool> enabled: true;
+    callback released;
+    height: 31px;
+    spacing: 8px;
+    Text {
+        text: root.label;
+        width: 68px;
+        color: Palette.foreground;
+        vertical-alignment: center;
+        font-size: 12px;
+        opacity: root.enabled ? 1 : 0.55;
+    }
 
-    Rectangle {
-        width: 44px;
-        height: 44px;
-        border-radius: 4px;
-        border-width: 1px;
-
-        border-color: root.active ? Palette.accent-background : Palette.border;
-        background: root.active ? Palette.accent-background : Palette.control-background;
+    Slider {
+        horizontal-stretch: 1;
+        minimum: 0;
+        maximum: root.maximum;
+        value <=> root.value;
+        enabled: root.enabled;
+        released => { root.released(); }
     }
 
     Text {
-        text: root.index;
-        vertical-alignment: center;
-        font-size: 18px;
+        text: Math.round(root.value);
+        width: 34px;
         color: Palette.foreground;
-        font-weight: 700;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+        font-size: 12px;
+        opacity: root.enabled ? 1 : 0.55;
     }
 }
 
@@ -40,10 +72,11 @@ export struct ConnectedDevice {
 }
 
 export component MainWindow inherits Window {
-    title: "sensorithm server v" + root.server-ver + "";
-    width: 800px;
-    height: 435px;
-
+    title: "sensorithm server v" + root.server-ver;
+    preferred-width: 1280px;
+    preferred-height: 760px;
+    min-width: 920px;
+    min-height: 620px;
     background: Palette.background;
     default-font-family: "Segoe UI";
 
@@ -55,291 +88,663 @@ export component MainWindow inherits Window {
     in property <bool> server-ok: false;
     in-out property <bool> auto-adb: false;
     in-out property <bool> minimize-on-startup: false;
+    in-out property <bool> disable-battery-low-warning: false;
     in property <string> server-ver: "{{serverVersion}}";
-
     in property <[bool]> sensor-states: [false, false, false, false, false, false];
     in property <[ConnectedDevice]> connected-devices: [];
+    in property <bool> client-connected: false;
+    in-out property <float> sensor-size-x: 15;
+    in-out property <float> sensor-size-y: 5;
+    in-out property <float> sensor-spacing: 10;
+    in-out property <float> sensor-angle: 180;
+    in-out property <float> camera-exposure: 10;
+    in-out property <float> sensor-threshold: 30;
+    in-out property <float> zone-offset-x: 0.5;
+    in-out property <float> zone-offset-y: 0.5;
+    in property <bool> torch-available: false;
+    in property <bool> torch-enabled: false;
+    in property <int> battery-percent: -1;
+    in property <bool> battery-charging: false;
+    in property <float> device-temperature: -1000;
+    in property <string> client-error: "";
+    in property <image> preview-image;
+    in property <int> preview-width: 0;
+    in property <int> preview-height: 0;
+    in property <bool> preview-loading: false;
+    in property <string> preview-status: "No preview requested";
+    in-out property <bool> auto-refresh-preview: false;
+    in-out property <int> preview-refresh-seconds: 1;
 
-    callback recalibrate-clicked(string);
+    callback recalibrate-clicked();
     callback github-clicked();
     callback forward-port-clicked();
     callback apply-clicked(string, string, string);
     callback config-edited(string, string, string);
     callback start-stop-clicked();
+    callback settings-released();
+    callback torch-requested(bool);
+    callback restart-camera-clicked();
+    callback refresh-preview-clicked();
+    callback preview-options-edited();
+    callback battery-warning-option-edited();
+    callback zone-edit-finished(float, float);
+
+    Timer {
+        interval: root.preview-refresh-seconds * 1s;
+        running: root.auto-refresh-preview && root.client-connected && !root.preview-loading;
+        triggered => { root.refresh-preview-clicked(); }
+    }
 
     VerticalLayout {
-        padding: 24px;
-        padding-bottom: 0px;
-        padding-top: 16px;
+        padding: 16px;
+        spacing: 12px;
 
         HorizontalLayout {
+            vertical-stretch: 1;
             spacing: 12px;
-            VerticalLayout {
-                spacing: 24px;
-                width: 280px;
-                alignment: start;
 
+            server-panel := Rectangle {
+                min-width: 240px;
+                preferred-width: 290px;
+                max-width: 310px;
+                horizontal-stretch: 0;
+                border-radius: 7px;
+                border-width: 1px;
+                border-color: Palette.border;
+                background: Palette.control-background;
                 VerticalLayout {
-                    spacing: 12px;
-                    Text {
-                        text: "Configuration";
-                        font-size: 20px;
-                        font-weight: 700;
-                        color: Palette.foreground;
-                    }
-
+                    padding: 14px;
+                    spacing: 10px;
                     HorizontalLayout {
-                        spacing: 12px;
-                        alignment: start;
-                        cross-axis-alignment: CrossAxisAlignment.center;
-
+                        height: 24px;
                         Text {
-                            text: "Server:";
-                            vertical-alignment: center;
-                            font-size: 13px;
+                            text: "sensorithm";
+                            font-size: 18px;
+                            font-weight: 700;
                             color: Palette.foreground;
+                            vertical-alignment: center;
                         }
 
                         Rectangle {
-                            width: 12px;
-                            height: 12px;
-                            border-radius: 6px;
-                            background: root.server-ok ? Palette.accent-background : Palette.border;
-                        }
-
-                        Text {
-                            text: root.server-ok ? "Running" : "Not running";
-                            vertical-alignment: center;
-                            font-size: 12px;
-                            color: Palette.foreground;
-                            opacity: 0.8;
+                            horizontal-stretch: 1;
                         }
 
                         Button {
-                            accessible-expandable: false;
-                            accessible-role: AccessibleRole.button;
                             primary: !root.server-ok;
                             enabled: root.config-valid;
+                            height: 24px;
                             text: root.server-ok ? "Stop" : "Start";
                             clicked => { root.start-stop-clicked(); }
                         }
                     }
 
-                    HorizontalLayout {
-                        spacing: 12px;
-                        alignment: start;
-                        Text {
-                            text: "Listen address:";
-                            vertical-alignment: center;
-                            font-size: 13px;
-                            color: Palette.foreground;
-                        }
+                    Rectangle {
+                        height: 1px;
+                        background: Palette.border;
+                    }
 
-                        LineEdit {
-                            input-type: InputType.text;
-                            placeholder-text: "127.0.0.1";
-                            text: root.listen-address;
-                            width: 175px;
-                            edited(val) => {
-                                root.listen-address = val;
-                                root.config-edited(root.listen-address, root.port, root.shared-buffer-path);
+                    ScrollView {
+                        vertical-stretch: 1;
+                        VerticalLayout {
+                            spacing: 6px;
+                            alignment: start;
+                            Text {
+                                text: "Network";
+                                height: 16px;
+                                color: Palette.foreground;
+                                font-size: 10px;
+                                opacity: 0.55;
                             }
-                        }
-                    }
 
-                    HorizontalLayout {
-                        spacing: 12px;
-                        alignment: start;
-                        Text {
-                            text: "Server port:";
-                            vertical-alignment: center;
-                            font-size: 13px;
-                            color: Palette.foreground;
-                        }
-
-                        LineEdit {
-                            input-type: InputType.number;
-                            text: root.port;
-                            width: 195px;
-                            edited(val) => {
-                                root.port = val;
-                                root.config-edited(root.listen-address, root.port, root.shared-buffer-path);
+                            Text {
+                                text: "Listen address";
+                                height: 18px;
+                                color: Palette.foreground;
+                                font-size: 12px;
                             }
-                        }
-                    }
 
-                    VerticalLayout {
-                        spacing: 12px;
-                        alignment: start;
-                        Text {
-                            text: "Brokenithm shared buffer path:";
-                            vertical-alignment: center;
-                            font-size: 13px;
-                            color: Palette.foreground;
-                        }
-
-                        LineEdit {
-                            input-type: InputType.text;
-                            text: root.shared-buffer-path;
-                            placeholder-text: "Local\\BROKENITHM_SHARED_BUFFER";
-                            width: 280px;
-                            edited(val) => {
-                                root.shared-buffer-path = val;
-                                root.config-edited(root.listen-address, root.port, root.shared-buffer-path);
+                            LineEdit {
+                                height: 32px;
+                                input-type: InputType.text;
+                                placeholder-text: "127.0.0.1";
+                                text: root.listen-address;
+                                edited(value) => {
+                                    root.listen-address = value;
+                                    root.config-edited(root.listen-address, root.port, root.shared-buffer-path);
+                                }
                             }
-                        }
-                    }
 
-                    CheckBox {
-                        text: "ADB Reverse Port on server startup";
-                        enabled: root.adb-found;
-                        checked: root.auto-adb;
-                        toggled => {
-                            root.auto-adb = self.checked;
-                            root.config-edited(root.listen-address, root.port, root.shared-buffer-path);
-                        }
-                    }
+                            Text {
+                                text: "Server port";
+                                height: 18px;
+                                color: Palette.foreground;
+                                font-size: 12px;
+                            }
 
-                    CheckBox {
-                        text: "Minimize UI on startup";
-                        checked: root.minimize-on-startup;
-                        toggled => {
-                            root.minimize-on-startup = self.checked;
-                            root.config-edited(root.listen-address, root.port, root.shared-buffer-path);
-                        }
-                    }
+                            LineEdit {
+                                height: 32px;
+                                input-type: InputType.number;
+                                text: root.port;
+                                edited(value) => {
+                                    root.port = value;
+                                    root.config-edited(root.listen-address, root.port, root.shared-buffer-path);
+                                }
+                            }
 
-                    Button {
-                        accessible-expandable: false;
-                        accessible-role: AccessibleRole.button;
-                        primary: true;
-                        enabled: root.config-valid;
-                        text: "Apply and restart server";
-                        width: 280px;
-                        clicked => { root.apply-clicked(root.listen-address, root.port, root.shared-buffer-path); }
-                    }
-                }
-            }
+                            Rectangle {
+                                height: 4px;
+                            }
 
-            VerticalLayout {
-                spacing: 24px;
-                width: 350px;
-                alignment: start;
+                            Text {
+                                text: "Output";
+                                height: 16px;
+                                color: Palette.foreground;
+                                font-size: 10px;
+                                opacity: 0.55;
+                            }
 
-                VerticalLayout {
-                    spacing: 12px;
-                    Text {
-                        text: "Connected devices";
-                        font-size: 20px;
-                        font-weight: 700;
-                        color: Palette.foreground;
-                    }
+                            Text {
+                                text: "Brokenithm shared buffer";
+                                height: 18px;
+                                color: Palette.foreground;
+                                font-size: 12px;
+                            }
 
-                    VerticalLayout {
-                        spacing: 6px;
-                        if root.connected-devices.length == 0: Text {
-                            text: "Please connect your Android™ device first!\n\nYou can use the \"Reverse port to Android™ device (ADB)\" button below to forward the server port to your Android™ device via ADB if you have it installed.\n\nYou also can connect using network if your Android™ device and PC are on the same network (not recommended if using wireless network).";
-                            font-size: 13px;
-                            color: Palette.foreground;
-                            wrap: word-wrap;
-                        }
+                            LineEdit {
+                                height: 32px;
+                                input-type: InputType.text;
+                                text: root.shared-buffer-path;
+                                placeholder-text: "Local\\BROKENITHM_SHARED_BUFFER";
+                                edited(value) => {
+                                    root.shared-buffer-path = value;
+                                    root.config-edited(root.listen-address, root.port, root.shared-buffer-path);
+                                }
+                            }
 
-                        if root.connected-devices.length > 0: ScrollView {
-                            height: 265px;
-                            VerticalLayout {
-                                spacing: 8px;
-                                alignment: start;
-                                for device in root.connected-devices: Rectangle {
-                                    background: Palette.control-background;
-                                    border-radius: 6px;
+                            Rectangle {
+                                height: 4px;
+                            }
 
-                                    HorizontalLayout {
-                                        alignment: space-between;
-                                        padding: 4px;
-                                        VerticalLayout {
-                                            alignment: center;
-                                            Text {
-                                                text: device.name;
-                                                font-size: 13px;
-                                                font-weight: 700;
-                                                color: Palette.foreground;
-                                            }
+                            Text {
+                                text: "Startup";
+                                height: 16px;
+                                color: Palette.foreground;
+                                font-size: 10px;
+                                opacity: 0.55;
+                            }
 
-                                            Text {
-                                                text: device.ip + " - " + device.description;
-                                                font-size: 12px;
-                                                color: Palette.foreground;
-                                                opacity: 0.8;
-                                            }
-                                        }
+                            CheckBox {
+                                height: 30px;
+                                text: "Reverse port with ADB";
+                                enabled: root.adb-found;
+                                checked: root.auto-adb;
+                                toggled => {
+                                    root.auto-adb = self.checked;
+                                    root.config-edited(root.listen-address, root.port, root.shared-buffer-path);
+                                }
+                            }
 
-                                        Button {
-                                            text: "Recalibrate";
-                                            clicked => {
-                                                root.recalibrate-clicked(device.id);
-                                            }
-                                        }
-                                    }
+                            CheckBox {
+                                height: 30px;
+                                text: "Minimize on startup";
+                                checked: root.minimize-on-startup;
+                                toggled => {
+                                    root.minimize-on-startup = self.checked;
+                                    root.config-edited(root.listen-address, root.port, root.shared-buffer-path);
+                                }
+                            }
+
+                            Rectangle {
+                                height: 4px;
+                            }
+
+                            Text {
+                                text: "Notifications";
+                                height: 16px;
+                                color: Palette.foreground;
+                                font-size: 10px;
+                                opacity: 0.55;
+                            }
+
+                            CheckBox {
+                                height: 30px;
+                                text: "Disable battery low warning";
+                                checked: root.disable-battery-low-warning;
+                                toggled => {
+                                    root.disable-battery-low-warning = self.checked;
+                                    root.battery-warning-option-edited();
                                 }
                             }
                         }
                     }
 
                     Button {
-                        text: root.adb-found ? "Reverse port to Android™ device (ADB)" : "Please install ADB first!";
-                        enabled: root.adb-found;
-                        width: 350px;
-                        clicked => { root.forward-port-clicked(); }
+                        primary: true;
+                        enabled: root.config-valid;
+                        text: "Apply and restart server";
+                        clicked => { root.apply-clicked(root.listen-address, root.port, root.shared-buffer-path); }
                     }
                 }
             }
 
-            VerticalLayout {
-                spacing: 16px;
-                alignment: start;
-                width: 150px;
-
-                Text {
-                    text: "Preview";
-                    font-size: 20px;
-                    font-weight: 700;
-                    color: Palette.foreground;
-                }
-
+            client-panel := Rectangle {
+                min-width: 280px;
+                preferred-width: 340px;
+                max-width: 360px;
+                horizontal-stretch: 0;
+                border-radius: 7px;
+                border-width: 1px;
+                border-color: Palette.border;
+                background: Palette.control-background;
                 VerticalLayout {
-                    padding-left: 16px;
-                    spacing: 8px;
+                    padding: 14px;
+                    spacing: 10px;
+                    Text {
+                        text: "Client";
+                        height: 26px;
+                        font-size: 18px;
+                        font-weight: 700;
+                        color: Palette.foreground;
+                    }
 
-                    for state[i] in root.sensor-states: SensorBox {
-                        index: 6 - i;
-                        active: state;
+                    Rectangle {
+                        height: 92px;
+                        border-radius: 5px;
+                        background: Palette.background;
+                        border-width: 1px;
+                        border-color: Palette.border;
+                        if root.connected-devices.length == 0: VerticalLayout {
+                            padding: 10px;
+                            spacing: 2px;
+                            Text {
+                                text: "No client connected";
+                                color: Palette.foreground;
+                                font-size: 13px;
+                                font-weight: 700;
+                            }
+
+                            Text {
+                                text: "Connect one Android™ or iOS (soon™) client over the local network or with ADB port reverse.";
+                                color: Palette.foreground;
+                                font-size: 11px;
+                                opacity: 0.65;
+                                wrap: word-wrap;
+                            }
+                        }
+                        if root.connected-devices.length > 0: VerticalLayout {
+                            padding: 10px;
+                            spacing: 3px;
+                            Text {
+                                text: root.connected-devices[0].name;
+                                color: Palette.foreground;
+                                font-size: 14px;
+                                font-weight: 700;
+                            }
+
+                            Text {
+                                text: root.connected-devices[0].ip;
+                                color: Palette.foreground;
+                                font-size: 11px;
+                                opacity: 0.75;
+                                overflow: elide;
+                            }
+
+                            Text {
+                                text: root.connected-devices[0].description;
+                                color: Palette.foreground;
+                                font-size: 11px;
+                                opacity: 0.6;
+                                overflow: elide;
+                            }
+
+                            HorizontalLayout {
+                                height: 18px;
+                                spacing: 14px;
+                                Text {
+                                    text: root.battery-percent >= 0
+                                        ? "Battery " + root.battery-percent + "%" + (root.battery-charging ? " (AC)" : "")
+                                        : "Battery unavailable";
+                                    color: Palette.foreground;
+                                    font-size: 11px;
+                                    opacity: 0.75;
+                                    vertical-alignment: center;
+                                }
+
+                                Text {
+                                    text: root.device-temperature > -999
+                                        ? "Temperature " + Math.round(root.device-temperature * 10) / 10 + " °C"
+                                        : "Temperature unavailable";
+                                    color: Palette.foreground;
+                                    font-size: 11px;
+                                    opacity: 0.75;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+
+                    Button {
+                        text: root.adb-found ? "Reverse port to Android with ADB" : "ADB is not installed";
+                        enabled: root.adb-found;
+                        clicked => { root.forward-port-clicked(); }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: Palette.border;
+                    }
+
+                    Text {
+                        text: "Sensor geometry";
+                        height: 16px;
+                        color: Palette.foreground;
+                        font-size: 10px;
+                        opacity: 0.55;
+                    }
+
+                    ScrollView {
+                        vertical-stretch: 1;
+                        VerticalLayout {
+                            spacing: 2px;
+                            alignment: start;
+                            SettingSlider {
+                                label: "Width";
+                                value <=> root.sensor-size-x;
+                                maximum: 50;
+                                enabled: root.client-connected;
+                                released => { root.settings-released(); }
+                            }
+
+                            SettingSlider {
+                                label: "Height";
+                                value <=> root.sensor-size-y;
+                                maximum: 50;
+                                enabled: root.client-connected;
+                                released => { root.settings-released(); }
+                            }
+
+                            SettingSlider {
+                                label: "Spacing";
+                                value <=> root.sensor-spacing;
+                                enabled: root.client-connected;
+                                released => { root.settings-released(); }
+                            }
+
+                            SettingSlider {
+                                label: "Angle";
+                                value <=> root.sensor-angle;
+                                maximum: 360;
+                                enabled: root.client-connected;
+                                released => { root.settings-released(); }
+                            }
+
+                            Rectangle {
+                                height: 4px;
+                            }
+
+                            Text {
+                                text: "Camera and detection";
+                                height: 16px;
+                                color: Palette.foreground;
+                                font-size: 10px;
+                                opacity: 0.55;
+                            }
+
+                            SettingSlider {
+                                label: "Exposure";
+                                value <=> root.camera-exposure;
+                                enabled: root.client-connected;
+                                released => { root.settings-released(); }
+                            }
+
+                            SettingSlider {
+                                label: "Threshold";
+                                value <=> root.sensor-threshold;
+                                maximum: 255;
+                                enabled: root.client-connected;
+                                released => { root.settings-released(); }
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Button {
+                            horizontal-stretch: 1;
+                            text: root.torch-available ? (root.torch-enabled ? "Flash on" : "Flash") : "No flash";
+                            enabled: root.client-connected && root.torch-available;
+                            clicked => { root.torch-requested(!root.torch-enabled); }
+                        }
+
+                        Button {
+                            horizontal-stretch: 1;
+                            text: "Restart camera";
+                            enabled: root.client-connected;
+                            clicked => { root.restart-camera-clicked(); }
+                        }
+
+                        Button {
+                            horizontal-stretch: 1;
+                            text: "Calibrate";
+                            enabled: root.client-connected;
+                            clicked => { root.recalibrate-clicked(); }
+                        }
+                    }
+
+                    if root.client-error != "": Rectangle {
+                        min-height: 34px;
+                        border-radius: 4px;
+                        background: #30ff5555;
+                        Text {
+                            x: 8px;
+                            width: parent.width - 16px;
+                            text: root.client-error;
+                            color: #ff8888;
+                            font-size: 11px;
+                            wrap: word-wrap;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+
+            preview-panel := Rectangle {
+                horizontal-stretch: 2;
+                min-width: 300px;
+                border-radius: 7px;
+                border-width: 1px;
+                border-color: Palette.border;
+                background: Palette.control-background;
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 10px;
+
+                    HorizontalLayout {
+                        height: 34px;
+                        spacing: 8px;
+
+                        Button {
+                            text: root.preview-loading ? "Loading..." : "Refresh preview";
+                            enabled: root.client-connected && !root.preview-loading;
+                            clicked => { root.refresh-preview-clicked(); }
+                        }
+
+                        Rectangle {
+                            horizontal-stretch: 1;
+                        }
+
+                        CheckBox {
+                            text: "Auto refresh";
+                            checked: root.auto-refresh-preview;
+                            toggled => {
+                                root.auto-refresh-preview = self.checked;
+                                root.preview-options-edited();
+                            }
+                        }
+
+                        ComboBox {
+                            width: 68px;
+                            horizontal-stretch: 0;
+                            model: ["1 s", "2 s", "3 s", "4 s", "5 s"];
+                            current-index: root.preview-refresh-seconds - 1;
+                            enabled: root.auto-refresh-preview;
+                            selected(value) => {
+                                root.preview-refresh-seconds = self.current-index + 1;
+                                root.preview-options-edited();
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        vertical-stretch: 1;
+                        spacing: 8px;
+                        preview-frame := Rectangle {
+                            horizontal-stretch: 1;
+                            min-width: 240px;
+                            min-height: 280px;
+                            background: #101010;
+                            border-width: 1px;
+                            border-color: Palette.border;
+                            clip: true;
+                            if root.preview-width > 0: preview-canvas := Rectangle {
+                                width: root.preview-width / root.preview-height >= parent.width / parent.height
+                                    ? parent.width
+                                    : parent.height * root.preview-width / root.preview-height;
+                                height: root.preview-width / root.preview-height >= parent.width / parent.height
+                                    ? parent.width * root.preview-height / root.preview-width
+                                    : parent.height;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                clip: true;
+                                Image {
+                                    source: root.preview-image;
+                                    image-fit: fill;
+                                    width: parent.width;
+                                    height: parent.height;
+                                }
+
+                                for zone-index in 6: Rectangle {
+                                    property <angle> direction-angle: (root.sensor-angle - 180) * 1deg;
+                                    width: Math.max(1px, root.sensor-size-x / 100 * preview-canvas.width);
+                                    height: Math.max(1px, root.sensor-size-y / 100 * preview-canvas.height);
+                                    x: root.zone-offset-x * preview-canvas.width
+                                        + (zone-index - 2.5) * root.sensor-spacing / 100 * preview-canvas.height * Math.sin(self.direction-angle)
+                                        - self.width / 2;
+                                    y: root.zone-offset-y * preview-canvas.height
+                                        + (zone-index - 2.5) * root.sensor-spacing / 100 * preview-canvas.height * Math.cos(self.direction-angle)
+                                        - self.height / 2;
+                                    background: root.sensor-states[zone-index] ? (zone-index == 5 ? #4c64c8ff : #ff614c63) : #ffffff6c;
+                                    border-color: root.sensor-states[zone-index] ? (zone-index == 5 ? #cc64c8ff : #ffe36463) : #ccdddddd;
+                                    border-width: 2px;
+                                    Text {
+                                        text: 6 - zone-index;
+                                        color: #afafaf;
+                                        font-weight: 700;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                drag-area := TouchArea {
+                                    enabled: root.client-connected;
+                                    mouse-cursor: move;
+                                    property <bool> dragging: false;
+                                    property <length> last-x: 0px;
+                                    property <length> last-y: 0px;
+                                    property <angle> direction-angle: (root.sensor-angle - 180) * 1deg;
+                                    property <float> span-x: Math.abs(2.5 * root.sensor-spacing / 100 * self.height / self.width * Math.sin(direction-angle)) + root.sensor-size-x / 200;
+                                    property <float> span-y: Math.abs(2.5 * root.sensor-spacing / 100 * Math.cos(direction-angle)) + root.sensor-size-y / 200;
+                                    pointer-event(event) => {
+                                        if event.button != PointerEventButton.left { return; }
+                                        if event.kind == PointerEventKind.down {
+                                            self.dragging = true;
+                                            self.last-x = self.mouse-x;
+                                            self.last-y = self.mouse-y;
+                                        } else if event.kind == PointerEventKind.up {
+                                            if self.dragging {
+                                                self.dragging = false;
+                                                root.zone-edit-finished(root.zone-offset-x, root.zone-offset-y);
+                                            }
+                                        }
+                                    }
+                                    moved => {
+                                        if self.dragging {
+                                            root.zone-offset-x += (self.mouse-x - self.last-x) / self.width;
+                                            root.zone-offset-y += (self.mouse-y - self.last-y) / self.height;
+                                            root.zone-offset-x = span-x <= 0.5 ? Math.max(span-x, Math.min(1 - span-x, root.zone-offset-x)) : 0.5;
+                                            root.zone-offset-y = span-y <= 0.5 ? Math.max(span-y, Math.min(1 - span-y, root.zone-offset-y)) : 0.5;
+                                            self.last-x = self.mouse-x;
+                                            self.last-y = self.mouse-y;
+                                        }
+                                    }
+                                }
+                            }
+                            if root.preview-width == 0: VerticalLayout {
+                                alignment: center;
+
+                                Text {
+                                    text: root.preview-status;
+                                    color: Palette.foreground;
+                                    font-size: 12px;
+                                    horizontal-alignment: center;
+                                    wrap: word-wrap;
+                                    opacity: 0.75;
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            width: 38px;
+                            horizontal-stretch: 0;
+                            VerticalLayout {
+                                alignment: LayoutAlignment.center;
+                                spacing: 6px;
+                                for state[i] in root.sensor-states: SensorBox {
+                                    index: 6 - i;
+                                    active: state;
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        height: 18px;
+                        text: root.preview-status;
+                        color: Palette.foreground;
+                        font-size: 11px;
+                        opacity: 0.65;
+                        vertical-alignment: center;
+                        horizontal-alignment: TextHorizontalAlignment.left;
+                        overflow: elide;
                     }
                 }
             }
         }
 
         HorizontalLayout {
-            alignment: start;
-            spacing: 0px;
-
+            height: 22px;
             Text {
-                text: "sensorithm server v" + root.server-ver + " by michioxd - ";
+                text: "sensorithm server v" + root.server-ver + " by michioxd";
                 color: Palette.foreground;
                 font-size: 12px;
+                opacity: 0.55;
                 vertical-alignment: center;
-                opacity: 0.8;
+            }
+
+            Rectangle {
+                horizontal-stretch: 1;
             }
 
             TouchArea {
+                width: 100px;
                 mouse-cursor: pointer;
                 clicked => { root.github-clicked(); }
-
                 Text {
-                    text: "GitHub";
+                    text: "Fork me on GitHub";
                     color: Palette.accent-background;
-                    opacity: parent.has-hover ? 0.8 : 1.0;
+                    opacity: parent.has-hover ? 0.8 : 1;
                     font-size: 12px;
-                    vertical-alignment: bottom; // lol idk
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
                 }
             }
         }

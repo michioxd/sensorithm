@@ -71,6 +71,7 @@ class ZoneOverlayView @JvmOverloads constructor(
     private var zoneCenters: List<ZoneCenter> = emptyList()
 
     var onOffsetChanged: (() -> Unit)? = null
+    var onOffsetChangeFinished: (() -> Unit)? = null
     var onCameraBoundsChanged: ((left: Int, top: Int, right: Int, bottom: Int) -> Unit)? = null
     
     private var lastLeft = -1
@@ -150,7 +151,11 @@ class ZoneOverlayView @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                val finishedDragging = isDragging
                 isDragging = false
+                if (finishedDragging && event.action == MotionEvent.ACTION_UP) {
+                    onOffsetChangeFinished?.invoke()
+                }
                 return true
             }
         }

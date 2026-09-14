@@ -7,6 +7,7 @@ sealed interface ConnectionState {
     data object Disconnected : ConnectionState
     data object Connecting : ConnectionState
     data class Connected(val serverVersion: String) : ConnectionState
+    data class Rejected(val message: String) : ConnectionState
 }
 
 class ConnectionManager(
@@ -14,7 +15,8 @@ class ConnectionManager(
     private val autoReconnectEnabled: () -> Boolean,
     private val onStateChanged: (ConnectionState) -> Unit,
     private val onConnectionTimeout: () -> Unit,
-    private val onRecalibrate: () -> Unit,
+    private val onMessage: (ServerMessage) -> Unit,
+    private val onProtocolError: (String) -> Unit,
     private val mainHandler: Handler = Handler(Looper.getMainLooper()),
 ) {
     @Volatile
@@ -35,6 +37,13 @@ class ConnectionManager(
                 updateState(ConnectionState.Connected(serverVersion))
             }
         },
+        onRejected = { message ->
+            mainHandler.post {
+                if (closed) return@post
+                cancelTimeout()
+                updateState(ConnectionState.Rejected(message))
+            }
+        },
         onDisconnected = {
             mainHandler.post {
                 if (closed) return@post
@@ -42,9 +51,14 @@ class ConnectionManager(
                 scheduleReconnectIfEnabled()
             }
         },
-        onRecalibrate = {
+        onMessage = { message ->
             mainHandler.post {
-                if (!closed) onRecalibrate()
+                if (!closed) onMessage(message)
+            }
+        },
+        onProtocolError = { message ->
+            mainHandler.post {
+                if (!closed) onProtocolError(message)
             }
         },
     )
@@ -64,7 +78,7 @@ class ConnectionManager(
 
     fun connect(address: String, port: Int) {
         if (closed) return
-        if (state != ConnectionState.Disconnected) return
+        if (state != ConnectionState.Disconnected && state !is ConnectionState.Rejected) return
         lastAddress = address
         lastPort = port
         updateState(ConnectionState.Connecting)
@@ -80,6 +94,8 @@ class ConnectionManager(
     }
 
     fun sendMask(mask: Byte) = client.sendMask(mask)
+
+    fun sendMessage(message: ClientMessage) = client.sendMessage(message)
 
     fun close() {
         closed = true

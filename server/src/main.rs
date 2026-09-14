@@ -4,10 +4,13 @@ slint::include_modules!();
 
 use slint::{ModelRc, VecModel};
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::thread;
 use tokio::sync::watch;
 
 mod config;
+mod preview;
 mod protocol;
 mod server;
 mod shared_buffer;
@@ -23,6 +26,9 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.set_shared_buffer_path(saved_config.listener.shared_buffer_path.clone().into());
     ui.set_auto_adb(saved_config.auto_adb);
     ui.set_minimize_on_startup(saved_config.minimize_on_startup);
+    ui.set_auto_refresh_preview(saved_config.auto_refresh_preview);
+    ui.set_preview_refresh_seconds(saved_config.preview_refresh_seconds as i32);
+    ui.set_disable_battery_low_warning(saved_config.disable_battery_low_warning);
     ui.set_config_valid(true);
 
     ui.set_server_ver(env!("CARGO_PKG_VERSION").into());
@@ -81,15 +87,17 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     let (port_tx, port_rx) = watch::channel(Some(initial_listener));
-    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel::<(String, String)>();
+    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel::<protocol::ServerMessage>();
+    let battery_low_warning_enabled =
+        Arc::new(AtomicBool::new(!saved_config.disable_battery_low_warning));
 
-    ui::setup_event_handlers(&ui, port_tx, cmd_tx);
+    ui::setup_event_handlers(&ui, port_tx, cmd_tx, battery_low_warning_enabled.clone());
 
     let ui_handle = ui.as_weak();
     thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            server::run_server(ui_handle, port_rx, cmd_rx).await;
+            server::run_server(ui_handle, port_rx, cmd_rx, battery_low_warning_enabled).await;
         });
     });
 

@@ -12,6 +12,7 @@ import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraInfo
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.CameraState
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.core.TorchState
@@ -24,6 +25,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.Observer
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicReference
 
 @SuppressLint("RestrictedApi", "UnsafeOptInUsageError")
 class CameraController(
@@ -36,7 +38,10 @@ class CameraController(
     private val onSensorMask: (Byte) -> Unit,
     private val onSensorMaskForDisplay: (Byte) -> Unit,
     private val onTorchChanged: (TorchUiState) -> Unit,
+    private val onPreviewCaptured: (PreviewCaptureResult) -> Unit,
     private val onCameraError: (Exception) -> Unit,
+    private val onCameraInterrupted: (String) -> Unit,
+    private val onCameraOperational: () -> Unit,
 ) {
     private val appContext = context.applicationContext
     private val mainExecutor = ContextCompat.getMainExecutor(context)
@@ -49,8 +54,16 @@ class CameraController(
     private var currentResolution: Size? = null
     private var currentFpsRange: Range<Int>? = null
     private var torchSource: androidx.lifecycle.LiveData<Int>? = null
+    private var cameraStateSource: androidx.lifecycle.LiveData<CameraState>? = null
     private val torchObserver = Observer<Int> { state ->
         onTorchChanged(TorchUiState.Available(state == TorchState.ON))
+    }
+    private val cameraStateObserver = Observer<CameraState> { state ->
+        val error = state.error ?: return@Observer
+        if (!closed && !cameraInterruptionReported) {
+            cameraInterruptionReported = true
+            onCameraInterrupted("Camera stopped unexpectedly (error ${error.code})")
+        }
     }
 
     @Volatile
@@ -64,6 +77,10 @@ class CameraController(
     private var closed = false
     @Volatile
     private var configuredGeometry: FrameGeometry? = null
+    @Volatile
+    private var awaitingFirstFrame = false
+    private var cameraInterruptionReported = false
+    private val pendingPreviewRequest = AtomicReference<String?>(null)
 
     val provider: ProcessCameraProvider?
         get() = cameraProvider
@@ -77,7 +94,7 @@ class CameraController(
     val fpsRange: Range<Int>?
         get() = currentFpsRange
 
-    fun start(config: CameraConfig) {
+    fun initialize(config: CameraConfig, onAvailabilityChecked: (Boolean) -> Unit) {
         closed = false
         restoreConfig(config)
 
@@ -86,12 +103,24 @@ class CameraController(
             if (closed) return@addListener
             try {
                 cameraProvider = providerFuture.get()
-                bind()
+                val provider = cameraProvider
+                val cameras = provider?.availableCameraInfos.orEmpty()
+                if (provider != null && cameras.isNotEmpty() && !provider.hasCamera(cameraSelector)) {
+                    val fallbackCamera = cameras.first()
+                    selectedCameraId = cameraId(fallbackCamera)
+                    cameraSelector = CameraSelector.Builder()
+                        .addCameraFilter { available -> available.filter { it == fallbackCamera } }
+                        .build()
+                }
+                onAvailabilityChecked(cameras.isNotEmpty())
             } catch (exception: Exception) {
                 onCameraError(exception)
+                onAvailabilityChecked(false)
             }
         }, mainExecutor)
     }
+
+    fun start() = bind()
 
     fun restoreConfig(config: CameraConfig) {
         selectedCameraId = config.cameraId
@@ -120,12 +149,27 @@ class CameraController(
         bind()
     }
 
-    fun restart() = bind()
+    fun restart(): Boolean = bind()
+
+    fun requestPreview(requestId: String): Boolean {
+        if (closed || currentCamera == null) return false
+        return pendingPreviewRequest.compareAndSet(null, requestId)
+    }
 
     fun toggleTorch() {
         val camera = currentCamera ?: return
         if (!camera.cameraInfo.hasFlashUnit()) return
-        camera.cameraControl.enableTorch(camera.cameraInfo.torchState.value != TorchState.ON)
+        setTorch(camera.cameraInfo.torchState.value != TorchState.ON)
+    }
+
+    fun setTorch(enabled: Boolean): Boolean {
+        val camera = currentCamera ?: return false
+        if (!camera.cameraInfo.hasFlashUnit()) {
+            onTorchChanged(TorchUiState.Unavailable)
+            return false
+        }
+        camera.cameraControl.enableTorch(enabled)
+        return true
     }
 
     fun setExposure(progress: Int) {
@@ -151,18 +195,27 @@ class CameraController(
         closed = true
         torchSource?.removeObserver(torchObserver)
         torchSource = null
+        cameraStateSource?.removeObserver(cameraStateObserver)
+        cameraStateSource = null
         cameraProvider?.unbindAll()
         analyzerExecutor.shutdown()
         currentCamera = null
+        awaitingFirstFrame = false
         cameraProvider = null
+        pendingPreviewRequest.set(null)
     }
 
-    private fun bind() {
-        if (closed) return
-        val provider = cameraProvider ?: return
+    private fun bind(): Boolean {
+        if (closed) return false
+        val provider = cameraProvider ?: return false
         provider.unbindAll()
+        currentCamera = null
         torchSource?.removeObserver(torchObserver)
         torchSource = null
+        cameraStateSource?.removeObserver(cameraStateObserver)
+        cameraStateSource = null
+        awaitingFirstFrame = false
+        cameraInterruptionReported = false
 
         val resolutionSelector = currentResolution?.let {
             ResolutionSelector.Builder()
@@ -192,16 +245,26 @@ class CameraController(
         try {
             currentCamera = provider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, analysis)
             selectedCameraId = currentCamera?.cameraInfo?.let(::cameraId).orEmpty().ifEmpty { selectedCameraId }
+            observeCameraState()
             observeTorch()
             setExposure(exposureProgress)
+            awaitingFirstFrame = true
+            return true
         } catch (exception: Exception) {
             Log.e(LOG_TAG, "Use case binding failed", exception)
             onCameraError(exception)
+            return false
         }
     }
 
     private fun analyzeFrame(image: androidx.camera.core.ImageProxy) {
         try {
+            if (awaitingFirstFrame) {
+                awaitingFirstFrame = false
+                mainExecutor.execute {
+                    if (!closed) onCameraOperational()
+                }
+            }
             updateFps()
             val rotation = image.imageInfo.rotationDegrees
             val swapsAxes = rotation == 90 || rotation == 270
@@ -230,6 +293,18 @@ class CameraController(
                     mainExecutor.execute {
                         if (!closed) onSensorMaskForDisplay(mask)
                     }
+                }
+            }
+            pendingPreviewRequest.getAndSet(null)?.let { requestId ->
+                try {
+                    onPreviewCaptured(PreviewCaptureResult.Success(requestId, PreviewEncoder.encode(image)))
+                } catch (exception: Exception) {
+                    onPreviewCaptured(
+                        PreviewCaptureResult.Failure(
+                            requestId,
+                            exception.message ?: "Preview capture failed",
+                        ),
+                    )
                 }
             }
         } finally {
@@ -261,6 +336,12 @@ class CameraController(
         }
     }
 
+    private fun observeCameraState() {
+        cameraStateSource = currentCamera?.cameraInfo?.cameraState?.also {
+            it.observe(lifecycleOwner, cameraStateObserver)
+        }
+    }
+
     private fun selectorFor(cameraId: String): CameraSelector {
         if (cameraId.isEmpty()) return CameraSelector.DEFAULT_BACK_CAMERA
         return CameraSelector.Builder().addCameraFilter { cameras ->
@@ -285,8 +366,13 @@ class CameraController(
         data class Available(val enabled: Boolean) : TorchUiState
     }
 
+    sealed interface PreviewCaptureResult {
+        data class Success(val requestId: String, val preview: EncodedPreview) : PreviewCaptureResult
+        data class Failure(val requestId: String, val message: String) : PreviewCaptureResult
+    }
+
     private companion object {
-        const val LOG_TAG = "Sensorithm"
+        const val LOG_TAG = "sensorithm"
         const val FPS_UPDATE_INTERVAL_MILLIS = 500L
     }
 }

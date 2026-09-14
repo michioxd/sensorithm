@@ -2,6 +2,19 @@
 name = "sensorithm-server"
 version = "0.1.0"
 edition = "2024"
+authors = ["michioxd"]
+description = "Windows server for sensorithm camera-based rhythm game sensors"
+license = "GPL-3.0-only"
+repository = "https://github.com/michioxd/sensorithm"
+homepage = "https://github.com/michioxd/sensorithm"
+
+[package.metadata.winresource]
+CompanyName = "michioxd"
+FileDescription = "sensorithm camera sensor server"
+InternalName = "sensorithm-server"
+LegalCopyright = "Copyright © 2026 michioxd"
+OriginalFilename = "sensorithm-server.exe"
+ProductName = "sensorithm server"
 
 [dependencies]
 slint = "1.17.1"
@@ -25,8 +38,11 @@ windows = { version = "0.61", features = [
 ] }
 winreg = "0.56.0"
 uuid = { version = "1.26.0", features = ["v4"] }
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 [target.'cfg(windows)'.dependencies]
+winrt-notification = "0.5.1"
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_Memory",
@@ -35,6 +51,7 @@ windows = { version = "0.61", features = [
 
 [build-dependencies]
 slint-build = "1.17.1"
+winresource = "0.1.31"
 
 [profile.release]
 opt-level = 3

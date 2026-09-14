@@ -10,12 +10,15 @@ data class AppConfig(
     val autoConnectOnStartup: Boolean = false,
     val zones: ZoneSettings = ZoneSettings(),
     val exposure: Int = DEFAULT_EXPOSURE,
+    val zoneOffsetX: Float = DEFAULT_ZONE_OFFSET,
+    val zoneOffsetY: Float = DEFAULT_ZONE_OFFSET,
     val camera: CameraConfig = CameraConfig(),
 ) {
     companion object {
         const val DEFAULT_SERVER_ADDRESS = "127.0.0.1"
         const val DEFAULT_SERVER_PORT = 4420
         const val DEFAULT_EXPOSURE = 10
+        const val DEFAULT_ZONE_OFFSET = 0.5f
     }
 }
 
@@ -47,6 +50,8 @@ class ConfigRepository(context: Context) {
             threshold = preferences.getInt(KEY_THRESHOLD, ZoneSettings.DEFAULT_THRESHOLD),
         ),
         exposure = preferences.getInt(KEY_EXPOSURE, AppConfig.DEFAULT_EXPOSURE),
+        zoneOffsetX = preferences.getFloat(KEY_ZONE_OFFSET_X, AppConfig.DEFAULT_ZONE_OFFSET),
+        zoneOffsetY = preferences.getFloat(KEY_ZONE_OFFSET_Y, AppConfig.DEFAULT_ZONE_OFFSET),
         camera = CameraConfig(
             cameraId = preferences.getString(KEY_CAMERA_ID, "") ?: "",
             resolutionWidth = preferences.getInt(KEY_RESOLUTION_WIDTH, 0),
@@ -68,6 +73,8 @@ class ConfigRepository(context: Context) {
             .putInt(KEY_ANGLE, config.zones.angleDegrees)
             .putInt(KEY_EXPOSURE, config.exposure)
             .putInt(KEY_THRESHOLD, config.zones.threshold)
+            .putFloat(KEY_ZONE_OFFSET_X, config.zoneOffsetX)
+            .putFloat(KEY_ZONE_OFFSET_Y, config.zoneOffsetY)
             .putString(KEY_CAMERA_ID, config.camera.cameraId)
             .putInt(KEY_RESOLUTION_WIDTH, config.camera.resolutionWidth)
             .putInt(KEY_RESOLUTION_HEIGHT, config.camera.resolutionHeight)
@@ -88,6 +95,8 @@ class ConfigRepository(context: Context) {
         const val KEY_ANGLE = "angle"
         const val KEY_EXPOSURE = "exposure"
         const val KEY_THRESHOLD = "threshold"
+        const val KEY_ZONE_OFFSET_X = "zoneOffsetX"
+        const val KEY_ZONE_OFFSET_Y = "zoneOffsetY"
         const val KEY_CAMERA_ID = "cameraId"
         const val KEY_RESOLUTION_WIDTH = "resW"
         const val KEY_RESOLUTION_HEIGHT = "resH"

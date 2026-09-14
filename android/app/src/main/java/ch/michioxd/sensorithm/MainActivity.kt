@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.WindowManager
 import android.view.GestureDetector
 import android.view.MotionEvent
@@ -21,12 +23,15 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var connectionManager: ConnectionManager
     private lateinit var configRepository: ConfigRepository
     private lateinit var cameraController: CameraController
+    private lateinit var stateSynchronizer: ClientStateSynchronizer
+    private lateinit var telemetryMonitor: DeviceTelemetryMonitor
     private lateinit var initialConfig: AppConfig
     private val sensorProcessor = SensorProcessor()
 
@@ -63,6 +68,18 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvThresholdValue: TextView
 
     private var backPressedTime: Long = 0
+    private var applyingRemoteSettings = false
+    private var currentTorchState: CameraController.TorchUiState = CameraController.TorchUiState.Unavailable
+    private var latestFps = 0f
+    private var latestBatteryTemperatureCelsius: Float? = null
+    private val cameraRecoveryHandler = Handler(Looper.getMainLooper())
+    private var cameraRestartAttempts = 0
+    private var cameraRecoveryActive = false
+    private var cameraRecoveryExhausted = false
+    private val cameraRecoveryRunnable = Runnable(::attemptAutomaticCameraRestart)
+    private val cameraRecoveryVerificationRunnable = Runnable {
+        if (cameraRecoveryActive) scheduleAutomaticCameraRestart()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
@@ -91,15 +108,16 @@ class MainActivity : AppCompatActivity() {
                 if (state is ConnectionState.Connected) {
                     sensorProcessor.resetOutput()
                     saveConfigs()
+                    stateSynchronizer.publishLocalSettings(currentSyncedSettings())
+                    publishTorchState()
+                    publishTelemetry()
                 }
             },
             onConnectionTimeout = {
                 Toast.makeText(this, "Connection timeout", Toast.LENGTH_SHORT).show()
             },
-            onRecalibrate = {
-                sensorProcessor.recalibrate()
-                Toast.makeText(this, "Recalibrated by server", Toast.LENGTH_SHORT).show()
-            },
+            onMessage = ::handleServerMessage,
+            onProtocolError = { message -> Toast.makeText(this, message, Toast.LENGTH_SHORT).show() },
         )
 
         initViews()
@@ -109,19 +127,40 @@ class MainActivity : AppCompatActivity() {
             previewView = previewView,
             sensorProcessor = sensorProcessor,
             onFrameGeometryChanged = { updateZones() },
-            onFpsChanged = { fps -> tvFps.text = String.format("%.1f FPS", fps) },
+            onFpsChanged = { fps ->
+                latestFps = fps
+                renderCameraMetrics()
+            },
             onSensorMask = connectionManager::sendMask,
             onSensorMaskForDisplay = overlayView::updateActiveMask,
-            onTorchChanged = ::renderTorchState,
-            onCameraError = { exception -> android.util.Log.e("Sensorithm", "Camera operation failed", exception) },
+            onTorchChanged = ::handleTorchState,
+            onPreviewCaptured = ::handlePreviewCaptured,
+            onCameraError = { exception ->
+                android.util.Log.e("Sensorithm", "Camera operation failed", exception)
+                handleCameraInterrupted(exception.message ?: "Camera operation failed")
+            },
+            onCameraInterrupted = ::handleCameraInterrupted,
+            onCameraOperational = ::handleCameraOperational,
         )
-        cameraController.restoreConfig(initialConfig.camera)
+        stateSynchronizer = ClientStateSynchronizer(
+            send = connectionManager::sendMessage,
+            applyRemote = ::applyRemoteSettings,
+        )
+        telemetryMonitor = DeviceTelemetryMonitor(this, ::handleTelemetryChanged)
+        telemetryMonitor.start()
         setupListeners()
-        
-        if (cbAutoConnectOnStartup.isChecked) {
-            connect()
+
+        cameraController.initialize(initialConfig.camera) { cameraAvailable ->
+            if (cameraAvailable) {
+                continueStartup()
+            } else {
+                showCameraRequiredDialog()
+            }
         }
-        
+    }
+
+    private fun continueStartup() {
+        if (cbAutoConnectOnStartup.isChecked) connect()
         if (allPermissionsGranted()) {
             startCamera()
         } else {
@@ -129,6 +168,15 @@ class MainActivity : AppCompatActivity() {
                 this, REQUIRED_PERMISSIONS, REQUEST_CODE_PERMISSIONS
             )
         }
+    }
+
+    private fun showCameraRequiredDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Camera required")
+            .setMessage("This device does not have a camera. This application requires a camera to operate.")
+            .setCancelable(false)
+            .setPositiveButton("OK") { _, _ -> finishAffinity() }
+            .show()
     }
 
     private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
@@ -193,6 +241,10 @@ class MainActivity : AppCompatActivity() {
         overlayView.onOffsetChanged = {
             updateZones()
         }
+        overlayView.onOffsetChangeFinished = {
+            stateSynchronizer.publishLocalSettings(currentSyncedSettings())
+            saveConfigs()
+        }
         
         overlayView.onCameraBoundsChanged = { left, top, right, bottom ->
             val parentWidth = overlayView.width
@@ -237,8 +289,8 @@ class MainActivity : AppCompatActivity() {
             ConnectionState.Connecting -> {
                 tvConnectionStatus.text = "Connecting..."
                 tvConnectionStatus.setTextColor(Color.YELLOW)
-                btnConnect.isEnabled = false
-                btnConnect.text = "Connecting..."
+                btnConnect.isEnabled = true
+                btnConnect.text = "Cancel"
             }
             is ConnectionState.Connected -> {
                 tvConnectionStatus.text = "Connected - v${state.serverVersion}"
@@ -246,12 +298,25 @@ class MainActivity : AppCompatActivity() {
                 btnConnect.isEnabled = true
                 btnConnect.text = "Disconnect"
             }
+            is ConnectionState.Rejected -> {
+                tvConnectionStatus.text = state.message
+                tvConnectionStatus.setTextColor(Color.RED)
+                btnConnect.isEnabled = true
+                btnConnect.text = "Connect"
+                AlertDialog.Builder(this)
+                    .setTitle("Connection rejected")
+                    .setMessage(state.message)
+                    .setPositiveButton("OK", null)
+                    .show()
+            }
         }
     }
 
     private fun setupListeners() {
         btnConnect.setOnClickListener {
-            if (connectionManager.state != ConnectionState.Disconnected) {
+            if (connectionManager.state is ConnectionState.Connected ||
+                connectionManager.state == ConnectionState.Connecting
+            ) {
                 cbAutoReconnect.isChecked = false
                 saveConfigs()
                 disconnect()
@@ -289,11 +354,12 @@ class MainActivity : AppCompatActivity() {
         val seekBarListener = object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 updateLabels()
-                updateZones()
+                if (!applyingRemoteSettings) updateZones()
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
                 saveConfigs()
+                stateSynchronizer.publishLocalSettings(currentSyncedSettings())
             }
         }
 
@@ -305,23 +371,24 @@ class MainActivity : AppCompatActivity() {
         sbExposure.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 tvExposureValue.text = "$progress"
-                cameraController.setExposure(progress)
+                if (!applyingRemoteSettings) cameraController.setExposure(progress)
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
                 saveConfigs()
+                stateSynchronizer.publishLocalSettings(currentSyncedSettings())
             }
         })
         
         sbThreshold.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 tvThresholdValue.text = "$progress"
-                val threshold = progress.toFloat()
-                sensorProcessor.setThreshold(threshold)
+                if (!applyingRemoteSettings) sensorProcessor.setThreshold(progress.toFloat())
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
                 saveConfigs()
+                stateSynchronizer.publishLocalSettings(currentSyncedSettings())
             }
         })
 
@@ -367,6 +434,8 @@ class MainActivity : AppCompatActivity() {
         sbAngle.progress = config.zones.angleDegrees
         sbExposure.progress = config.exposure
         sbThreshold.progress = config.zones.threshold
+        overlayView.offsetX = config.zoneOffsetX.coerceIn(0f, 1f)
+        overlayView.offsetY = config.zoneOffsetY.coerceIn(0f, 1f)
 
     }
     
@@ -379,6 +448,8 @@ class MainActivity : AppCompatActivity() {
                 autoConnectOnStartup = cbAutoConnectOnStartup.isChecked,
                 zones = currentZoneSettings(),
                 exposure = sbExposure.progress,
+                zoneOffsetX = overlayView.offsetX,
+                zoneOffsetY = overlayView.offsetY,
                 camera = cameraController.config(),
             ),
         )
@@ -413,6 +484,95 @@ class MainActivity : AppCompatActivity() {
         threshold = sbThreshold.progress,
     )
 
+    private fun currentSyncedSettings() = SyncedSettings(
+        sizeX = sbSizeX.progress,
+        sizeY = sbSizeY.progress,
+        spacing = sbSpacing.progress,
+        angle = sbAngle.progress,
+        exposure = sbExposure.progress,
+        threshold = sbThreshold.progress,
+        offsetX = overlayView.offsetX,
+        offsetY = overlayView.offsetY,
+    )
+
+    private fun applyRemoteSettings(settings: SyncedSettings) {
+        applyingRemoteSettings = true
+        try {
+            sbSizeX.progress = settings.sizeX
+            sbSizeY.progress = settings.sizeY
+            sbSpacing.progress = settings.spacing
+            sbAngle.progress = settings.angle
+            sbExposure.progress = settings.exposure
+            sbThreshold.progress = settings.threshold
+            overlayView.offsetX = settings.offsetX
+            overlayView.offsetY = settings.offsetY
+        } finally {
+            applyingRemoteSettings = false
+        }
+        updateLabels()
+        cameraController.setExposure(settings.exposure)
+        sensorProcessor.setThreshold(settings.threshold.toFloat())
+        updateZones()
+        saveConfigs()
+    }
+
+    private fun handleServerMessage(message: ServerMessage) {
+        when (message) {
+            ServerMessage.Recalibrate -> {
+                sensorProcessor.recalibrate()
+                Toast.makeText(this, "Recalibrated by server", Toast.LENGTH_SHORT).show()
+            }
+            is ServerMessage.Settings -> {
+                if (!stateSynchronizer.applyRemoteSettings(message.settings)) {
+                    connectionManager.sendMessage(
+                        ClientMessage.Error("settings", null, "Received invalid settings"),
+                    )
+                }
+            }
+            is ServerMessage.SetTorch -> {
+                if (!cameraController.setTorch(message.enabled)) {
+                    connectionManager.sendMessage(
+                        ClientMessage.Error("torch", null, "Flash is unavailable"),
+                    )
+                }
+            }
+            ServerMessage.RestartCamera -> {
+                if (!cameraController.restart()) {
+                    connectionManager.sendMessage(
+                        ClientMessage.Error("camera_restart", null, "Camera restart failed"),
+                    )
+                }
+            }
+            is ServerMessage.RequestPreview -> {
+                if (!cameraController.requestPreview(message.requestId)) {
+                    connectionManager.sendMessage(
+                        ClientMessage.Error(
+                            "preview",
+                            message.requestId,
+                            "Camera is unavailable or another preview is pending",
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun handlePreviewCaptured(result: CameraController.PreviewCaptureResult) {
+        when (result) {
+            is CameraController.PreviewCaptureResult.Success -> connectionManager.sendMessage(
+                ClientMessage.Preview(
+                    requestId = result.requestId,
+                    width = result.preview.width,
+                    height = result.preview.height,
+                    jpegBytes = result.preview.jpegBytes,
+                ),
+            )
+            is CameraController.PreviewCaptureResult.Failure -> connectionManager.sendMessage(
+                ClientMessage.Error("preview", result.requestId, result.message),
+            )
+        }
+    }
+
     private fun showCameraSelectionDialog() {
         CameraDialogHelper.showCameraSelectionDialog(this, cameraController.provider, cameraController.camera?.cameraInfo) { info ->
             cameraController.selectCamera(info)
@@ -437,7 +597,78 @@ class MainActivity : AppCompatActivity() {
     private fun startCamera() {
         cameraController.setExposure(sbExposure.progress)
         sensorProcessor.setThreshold(sbThreshold.progress.toFloat())
-        cameraController.start(initialConfig.camera)
+        cameraController.start()
+    }
+
+    private fun handleCameraInterrupted(message: String) {
+        android.util.Log.w("Sensorithm", message)
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) || cameraRecoveryExhausted) {
+            return
+        }
+        if (!cameraRecoveryActive) {
+            cameraRecoveryActive = true
+            cameraRestartAttempts = 0
+        }
+        cameraRecoveryHandler.removeCallbacks(cameraRecoveryVerificationRunnable)
+        scheduleAutomaticCameraRestart()
+    }
+
+    private fun scheduleAutomaticCameraRestart() {
+        if (!cameraRecoveryActive || cameraRecoveryExhausted) return
+        cameraRecoveryHandler.removeCallbacks(cameraRecoveryRunnable)
+        if (cameraRestartAttempts >= MAX_AUTOMATIC_CAMERA_RESTARTS) {
+            cameraRecoveryActive = false
+            cameraRecoveryExhausted = true
+            Toast.makeText(
+                this,
+                "Could not restart camera after $MAX_AUTOMATIC_CAMERA_RESTARTS attempts",
+                Toast.LENGTH_LONG,
+            ).show()
+            return
+        }
+        val delay = if (cameraRestartAttempts == 0) 0L else CAMERA_RESTART_DELAY_MILLIS
+        cameraRecoveryHandler.postDelayed(cameraRecoveryRunnable, delay)
+    }
+
+    private fun attemptAutomaticCameraRestart() {
+        if (!cameraRecoveryActive || cameraRecoveryExhausted) return
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            cameraRecoveryActive = false
+            cameraRestartAttempts = 0
+            return
+        }
+
+        cameraRestartAttempts++
+        Toast.makeText(
+            this,
+            "Camera disconnected. Restarting ($cameraRestartAttempts/$MAX_AUTOMATIC_CAMERA_RESTARTS)...",
+            Toast.LENGTH_SHORT,
+        ).show()
+
+        cameraRecoveryHandler.removeCallbacks(cameraRecoveryVerificationRunnable)
+        if (cameraController.restart()) {
+            // Binding alone is not proof that the device recovered. The first
+            // analyzer frame calls handleCameraOperational and cancels this timeout.
+            cameraRecoveryHandler.removeCallbacks(cameraRecoveryRunnable)
+            cameraRecoveryHandler.postDelayed(
+                cameraRecoveryVerificationRunnable,
+                CAMERA_RECOVERY_VERIFICATION_MILLIS,
+            )
+        } else {
+            scheduleAutomaticCameraRestart()
+        }
+    }
+
+    private fun handleCameraOperational() {
+        val recovered = cameraRecoveryActive || cameraRecoveryExhausted || cameraRestartAttempts > 0
+        cameraRecoveryHandler.removeCallbacks(cameraRecoveryRunnable)
+        cameraRecoveryHandler.removeCallbacks(cameraRecoveryVerificationRunnable)
+        cameraRecoveryActive = false
+        cameraRecoveryExhausted = false
+        cameraRestartAttempts = 0
+        if (recovered) {
+            Toast.makeText(this, "Camera restarted successfully", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun renderTorchState(state: CameraController.TorchUiState) {
@@ -448,13 +679,54 @@ class MainActivity : AppCompatActivity() {
             }
             is CameraController.TorchUiState.Available -> {
                 btnToggleFlash.isEnabled = true
-                btnToggleFlash.text = if (state.enabled) "Flash: ON" else "Flash"
+                btnToggleFlash.text = if (state.enabled) "Flash ON" else "Flash"
             }
         }
     }
 
+    private fun handleTorchState(state: CameraController.TorchUiState) {
+        currentTorchState = state
+        renderTorchState(state)
+        publishTorchState()
+    }
+
+    private fun publishTorchState() {
+        connectionManager.sendMessage(
+            when (val state = currentTorchState) {
+                CameraController.TorchUiState.Unavailable -> ClientMessage.TorchState(false, false)
+                is CameraController.TorchUiState.Available -> ClientMessage.TorchState(true, state.enabled)
+            },
+        )
+    }
+
+    private fun handleTelemetryChanged(snapshot: DeviceTelemetrySnapshot) {
+        latestBatteryTemperatureCelsius = snapshot.batteryTemperatureCelsius
+        renderCameraMetrics()
+        publishTelemetry()
+    }
+
+    private fun publishTelemetry() {
+        val telemetry = telemetryMonitor.current ?: return
+        connectionManager.sendMessage(
+            ClientMessage.Telemetry(
+                batteryPercent = telemetry.batteryPercent,
+                temperatureCelsius = telemetry.batteryTemperatureCelsius,
+                charging = telemetry.isCharging,
+            ),
+        )
+    }
+
+    private fun renderCameraMetrics() {
+        tvFps.text = latestBatteryTemperatureCelsius?.let { temperature ->
+            String.format("%.1f FPS  %.1f °C", latestFps, temperature)
+        } ?: String.format("%.1f FPS  -- °C", latestFps)
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        cameraRecoveryHandler.removeCallbacks(cameraRecoveryRunnable)
+        cameraRecoveryHandler.removeCallbacks(cameraRecoveryVerificationRunnable)
+        telemetryMonitor.close()
         connectionManager.close()
         cameraController.close()
     }
@@ -462,6 +734,9 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val REQUEST_CODE_PERMISSIONS = 10
         private const val CONNECT_FALLBACK_PORT = 8080
+        private const val MAX_AUTOMATIC_CAMERA_RESTARTS = 3
+        private const val CAMERA_RESTART_DELAY_MILLIS = 1_000L
+        private const val CAMERA_RECOVERY_VERIFICATION_MILLIS = 3_000L
         private val REQUIRED_PERMISSIONS = arrayOf(Manifest.permission.CAMERA)
     }
 }
