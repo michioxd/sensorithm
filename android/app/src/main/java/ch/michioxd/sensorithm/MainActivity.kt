@@ -85,7 +85,7 @@ class MainActivity : AppCompatActivity() {
     private val cameraStartRunnable = Runnable {
         cameraStartPosted = false
         if (!cameraStartPending ||
-            !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) ||
+            !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) ||
             isFinishing || isDestroyed
         ) {
             return@Runnable
@@ -619,7 +619,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun scheduleCameraStart() {
         if (!cameraStartPending || cameraStartPosted ||
-            !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+            !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
         ) {
             return
         }
@@ -630,7 +630,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleCameraInterrupted(message: String) {
         android.util.Log.w("Sensorithm", message)
-        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
             cameraStartPending = true
             return
         }
@@ -702,8 +702,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    override fun onResume() {
-        super.onResume()
+    override fun onStart() {
+        super.onStart()
         scheduleCameraStart()
     }
 
