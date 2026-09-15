@@ -76,9 +76,25 @@ class MainActivity : AppCompatActivity() {
     private var cameraRestartAttempts = 0
     private var cameraRecoveryActive = false
     private var cameraRecoveryExhausted = false
+    private var cameraStartPending = false
+    private var cameraStartPosted = false
     private val cameraRecoveryRunnable = Runnable(::attemptAutomaticCameraRestart)
     private val cameraRecoveryVerificationRunnable = Runnable {
         if (cameraRecoveryActive) scheduleAutomaticCameraRestart()
+    }
+    private val cameraStartRunnable = Runnable {
+        cameraStartPosted = false
+        if (!cameraStartPending ||
+            !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) ||
+            isFinishing || isDestroyed
+        ) {
+            return@Runnable
+        }
+
+        cameraStartPending = false
+        if (!cameraController.start()) {
+            handleCameraInterrupted("Could not start camera")
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -597,12 +613,28 @@ class MainActivity : AppCompatActivity() {
     private fun startCamera() {
         cameraController.setExposure(sbExposure.progress)
         sensorProcessor.setThreshold(sbThreshold.progress.toFloat())
-        cameraController.start()
+        cameraStartPending = true
+        scheduleCameraStart()
+    }
+
+    private fun scheduleCameraStart() {
+        if (!cameraStartPending || cameraStartPosted ||
+            !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+        ) {
+            return
+        }
+
+        cameraStartPosted = true
+        previewView.post(cameraStartRunnable)
     }
 
     private fun handleCameraInterrupted(message: String) {
         android.util.Log.w("Sensorithm", message)
-        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) || cameraRecoveryExhausted) {
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            cameraStartPending = true
+            return
+        }
+        if (cameraRecoveryExhausted) {
             return
         }
         if (!cameraRecoveryActive) {
@@ -647,8 +679,6 @@ class MainActivity : AppCompatActivity() {
 
         cameraRecoveryHandler.removeCallbacks(cameraRecoveryVerificationRunnable)
         if (cameraController.restart()) {
-            // Binding alone is not proof that the device recovered. The first
-            // analyzer frame calls handleCameraOperational and cancels this timeout.
             cameraRecoveryHandler.removeCallbacks(cameraRecoveryRunnable)
             cameraRecoveryHandler.postDelayed(
                 cameraRecoveryVerificationRunnable,
@@ -661,6 +691,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleCameraOperational() {
         val recovered = cameraRecoveryActive || cameraRecoveryExhausted || cameraRestartAttempts > 0
+        cameraStartPending = false
         cameraRecoveryHandler.removeCallbacks(cameraRecoveryRunnable)
         cameraRecoveryHandler.removeCallbacks(cameraRecoveryVerificationRunnable)
         cameraRecoveryActive = false
@@ -669,6 +700,11 @@ class MainActivity : AppCompatActivity() {
         if (recovered) {
             Toast.makeText(this, "Camera restarted successfully", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        scheduleCameraStart()
     }
 
     private fun renderTorchState(state: CameraController.TorchUiState) {
@@ -724,6 +760,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        previewView.removeCallbacks(cameraStartRunnable)
+        cameraStartPending = false
+        cameraStartPosted = false
         cameraRecoveryHandler.removeCallbacks(cameraRecoveryRunnable)
         cameraRecoveryHandler.removeCallbacks(cameraRecoveryVerificationRunnable)
         telemetryMonitor.close()
