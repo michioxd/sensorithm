@@ -197,6 +197,7 @@ fn preferences_from_ui(ui: &MainWindow) -> ServerPreferences {
         auto_refresh_preview: ui.get_auto_refresh_preview(),
         preview_refresh_seconds: ui.get_preview_refresh_seconds() as u32,
         disable_battery_low_warning: ui.get_disable_battery_low_warning(),
+        backdrop_effect: crate::theme::BackdropEffect::from_index(ui.get_backdrop_mode()),
     }
 }
 

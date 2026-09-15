@@ -77,7 +77,21 @@ export component MainWindow inherits Window {
     preferred-height: 760px;
     min-width: 920px;
     min-height: 620px;
-    background: Palette.background;
+    in property <bool> backdrop-enabled: false;
+    background: root.backdrop-enabled ? transparent : Palette.background;
+    property <bool> dark-color-scheme: Palette.color-scheme == ColorScheme.dark;
+    in property <brush> panel-background: root.backdrop-enabled
+        ? (root.dark-color-scheme ? #f7f7f7.with-alpha(0.05) : #f7f7f7.with-alpha(0.5))
+        : Palette.control-background;
+    in property <brush> surface-background: root.backdrop-enabled
+        ? (root.dark-color-scheme ? #2b2b2b.with-alpha(0.58) : #ffffff.with-alpha(0.62))
+        : Palette.background;
+    in property <brush> backdrop-border-color: root.backdrop-enabled
+        ? (root.dark-color-scheme ? #222222.with-alpha(0.10) : #000000.with-alpha(0.07))
+        : Palette.border;
+    in property <brush> preview-background: root.preview-width > 0
+        ? #101010
+        : root.surface-background;
     default-font-family: "Segoe UI";
 
     in-out property <string> listen-address: "0.0.0.0";
@@ -89,6 +103,7 @@ export component MainWindow inherits Window {
     in-out property <bool> auto-adb: false;
     in-out property <bool> minimize-on-startup: false;
     in-out property <bool> disable-battery-low-warning: false;
+    in-out property <int> backdrop-mode: 2;
     in property <string> server-ver: "{{serverVersion}}";
     in property <[bool]> sensor-states: [false, false, false, false, false, false];
     in property <[ConnectedDevice]> connected-devices: [];
@@ -127,6 +142,7 @@ export component MainWindow inherits Window {
     callback refresh-preview-clicked();
     callback preview-options-edited();
     callback battery-warning-option-edited();
+    callback backdrop-mode-edited(int);
     callback zone-edit-finished(float, float);
 
     Timer {
@@ -148,10 +164,10 @@ export component MainWindow inherits Window {
                 preferred-width: 290px;
                 max-width: 310px;
                 horizontal-stretch: 0;
-                border-radius: 7px;
+                border-radius: 5px;
                 border-width: 1px;
-                border-color: Palette.border;
-                background: Palette.control-background;
+                border-color: root.backdrop-border-color;
+                background: root.panel-background;
                 VerticalLayout {
                     padding: 14px;
                     spacing: 10px;
@@ -180,7 +196,7 @@ export component MainWindow inherits Window {
 
                     Rectangle {
                         height: 1px;
-                        background: Palette.border;
+                        background: backdrop-border-color;
                     }
 
                     ScrollView {
@@ -299,7 +315,7 @@ export component MainWindow inherits Window {
                             }
 
                             Text {
-                                text: "Notifications";
+                                text: "User interfaces";
                                 height: 16px;
                                 color: Palette.foreground;
                                 font-size: 10px;
@@ -313,6 +329,27 @@ export component MainWindow inherits Window {
                                 toggled => {
                                     root.disable-battery-low-warning = self.checked;
                                     root.battery-warning-option-edited();
+                                }
+                            }
+
+                            Rectangle {
+                                height: 4px;
+                            }
+
+                            Text {
+                                text: "Window backdrop";
+                                height: 18px;
+                                color: Palette.foreground;
+                                font-size: 12px;
+                            }
+
+                            ComboBox {
+                                height: 32px;
+                                model: ["Mica", "Acrylic", "Acrylic (Windows 10 API)", "Disabled"];
+                                current-index: root.backdrop-mode;
+                                selected(_) => {
+                                    root.backdrop-mode = self.current-index;
+                                    root.backdrop-mode-edited(root.backdrop-mode);
                                 }
                             }
                         }
@@ -332,10 +369,10 @@ export component MainWindow inherits Window {
                 preferred-width: 340px;
                 max-width: 360px;
                 horizontal-stretch: 0;
-                border-radius: 7px;
+                border-radius: 5px;
                 border-width: 1px;
-                border-color: Palette.border;
-                background: Palette.control-background;
+                border-color: root.backdrop-border-color;
+                background: root.panel-background;
                 VerticalLayout {
                     padding: 14px;
                     spacing: 10px;
@@ -350,9 +387,9 @@ export component MainWindow inherits Window {
                     Rectangle {
                         height: 92px;
                         border-radius: 5px;
-                        background: Palette.background;
+                        background: root.surface-background;
                         border-width: 1px;
-                        border-color: Palette.border;
+                        border-color: root.backdrop-border-color;
                         if root.connected-devices.length == 0: VerticalLayout {
                             padding: 10px;
                             spacing: 2px;
@@ -431,7 +468,7 @@ export component MainWindow inherits Window {
 
                     Rectangle {
                         height: 1px;
-                        background: Palette.border;
+                        background: backdrop-border-color;
                     }
 
                     Text {
@@ -551,10 +588,10 @@ export component MainWindow inherits Window {
             preview-panel := Rectangle {
                 horizontal-stretch: 2;
                 min-width: 300px;
-                border-radius: 7px;
+                border-radius: 5px;
                 border-width: 1px;
-                border-color: Palette.border;
-                background: Palette.control-background;
+                border-color: root.backdrop-border-color;
+                background: root.panel-background;
                 VerticalLayout {
                     padding: 14px;
                     spacing: 10px;
@@ -602,9 +639,9 @@ export component MainWindow inherits Window {
                             horizontal-stretch: 1;
                             min-width: 240px;
                             min-height: 280px;
-                            background: #101010;
+                            background: root.preview-background;
                             border-width: 1px;
-                            border-color: Palette.border;
+                            border-color: root.backdrop-border-color;
                             clip: true;
                             if root.preview-width > 0: preview-canvas := Rectangle {
                                 width: root.preview-width / root.preview-height >= parent.width / parent.height

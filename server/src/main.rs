@@ -14,13 +14,20 @@ mod preview;
 mod protocol;
 mod server;
 mod shared_buffer;
+mod theme;
 mod ui;
 mod utils;
 
 fn main() -> Result<(), slint::PlatformError> {
+    let saved_config = config::load_config();
+
+    #[cfg(windows)]
+    theme::select_backend()?;
+
     let ui = MainWindow::new()?;
 
-    let saved_config = config::load_config();
+    #[cfg(windows)]
+    theme::setup(&ui, saved_config.backdrop_effect);
     ui.set_listen_address(saved_config.listener.address.clone().into());
     ui.set_port(saved_config.listener.port.to_string().into());
     ui.set_shared_buffer_path(saved_config.listener.shared_buffer_path.clone().into());

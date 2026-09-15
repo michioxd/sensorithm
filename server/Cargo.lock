@@ -4200,6 +4200,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "image",
+ "raw-window-handle",
  "serde",
  "serde_json",
  "slint",
@@ -4407,6 +4408,7 @@ checksum = "ce12038f57f8f3a423564b0c9301a2ab3fda4246e4cbadd6b97acf9124bdc315"
 dependencies = [
  "const-field-offset",
  "i-slint-backend-selector",
+ "i-slint-backend-winit",
  "i-slint-common",
  "i-slint-core",
  "i-slint-core-macros",
@@ -4415,6 +4417,7 @@ dependencies = [
  "num-traits",
  "once_cell",
  "pin-weak",
+ "raw-window-handle",
  "slint-macros",
  "unicode-segmentation",
  "vtable",

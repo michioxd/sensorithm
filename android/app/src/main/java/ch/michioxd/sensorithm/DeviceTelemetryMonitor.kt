@@ -13,7 +13,6 @@ data class DeviceTelemetrySnapshot(
     val isCharging: Boolean,
 )
 
-/** Event-driven battery telemetry. No polling thread is used. */
 class DeviceTelemetryMonitor(
     context: Context,
     private val onChanged: (DeviceTelemetrySnapshot) -> Unit,

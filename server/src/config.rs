@@ -2,6 +2,8 @@ use std::net::Ipv4Addr;
 use winreg::RegKey;
 use winreg::enums::*;
 
+use crate::theme::BackdropEffect;
+
 const REGISTRY_PATH: &str = r"SOFTWARE\sensorithm";
 pub const DEFAULT_ADDRESS: &str = "0.0.0.0";
 pub const EMPTY_ADDRESS_FALLBACK: &str = "127.0.0.1";
@@ -24,6 +26,7 @@ pub struct ServerConfig {
     pub auto_refresh_preview: bool,
     pub preview_refresh_seconds: u32,
     pub disable_battery_low_warning: bool,
+    pub backdrop_effect: BackdropEffect,
     pub window_position: Option<(i32, i32)>,
 }
 
@@ -34,6 +37,7 @@ pub struct ServerPreferences {
     pub auto_refresh_preview: bool,
     pub preview_refresh_seconds: u32,
     pub disable_battery_low_warning: bool,
+    pub backdrop_effect: BackdropEffect,
 }
 
 impl ServerConfig {
@@ -62,6 +66,7 @@ impl ServerConfig {
             auto_refresh_preview: preferences.auto_refresh_preview,
             preview_refresh_seconds: preferences.preview_refresh_seconds.clamp(1, 5),
             disable_battery_low_warning: preferences.disable_battery_low_warning,
+            backdrop_effect: preferences.backdrop_effect,
             window_position: None,
         }
     }
@@ -77,6 +82,7 @@ pub fn load_config() -> ServerConfig {
     let mut auto_refresh_preview = false;
     let mut preview_refresh_seconds = DEFAULT_PREVIEW_REFRESH_SECONDS;
     let mut disable_battery_low_warning = false;
+    let mut backdrop_effect = BackdropEffect::default();
     let mut window_pos = None;
 
     if let Ok(key) = hkcu.open_subkey(REGISTRY_PATH) {
@@ -110,6 +116,9 @@ pub fn load_config() -> ServerConfig {
             let disabled: u32 = val;
             disable_battery_low_warning = disabled != 0;
         }
+        if let Ok(val) = key.get_value("backdrop_effect") {
+            backdrop_effect = BackdropEffect::from_registry(val);
+        }
         if let (Ok(x), Ok(y)) = (
             key.get_value::<u32, _>("window_x"),
             key.get_value::<u32, _>("window_y"),
@@ -128,6 +137,7 @@ pub fn load_config() -> ServerConfig {
         auto_refresh_preview,
         preview_refresh_seconds,
         disable_battery_low_warning,
+        backdrop_effect,
         window_position: window_pos,
     }
 }
@@ -164,6 +174,14 @@ pub fn save_config(config: &ServerConfig) {
                 0u32
             }),
         );
+        let _ = key.set_value("backdrop_effect", &(config.backdrop_effect as u32));
+    }
+}
+
+pub fn save_backdrop_effect(effect: BackdropEffect) {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    if let Ok((key, _)) = hkcu.create_subkey(REGISTRY_PATH) {
+        let _ = key.set_value("backdrop_effect", &(effect as u32));
     }
 }
 
@@ -197,6 +215,7 @@ mod tests {
                 auto_refresh_preview: true,
                 preview_refresh_seconds: 9,
                 disable_battery_low_warning: true,
+                backdrop_effect: BackdropEffect::Acrylic,
             },
         );
         assert_eq!(config.listener.address, EMPTY_ADDRESS_FALLBACK);
@@ -210,6 +229,7 @@ mod tests {
         assert!(config.auto_refresh_preview);
         assert_eq!(config.preview_refresh_seconds, 5);
         assert!(config.disable_battery_low_warning);
+        assert_eq!(config.backdrop_effect, BackdropEffect::Acrylic);
     }
 
     #[test]

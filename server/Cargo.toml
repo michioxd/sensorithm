@@ -17,7 +17,10 @@ OriginalFilename = "sensorithm-server.exe"
 ProductName = "sensorithm server"
 
 [dependencies]
-slint = "1.17.1"
+slint = { version = "1.17.1", features = [
+    "raw-window-handle-06",
+    "unstable-winit-030",
+] }
 webbrowser = "1.2.4"
 which = "8.0.6"
 serde = { version = "1", features = ["derive"] }
@@ -31,9 +34,12 @@ tokio = { version = "1", features = [
     "macros",
 ] }
 windows = { version = "0.61", features = [
+    "Win32_Graphics_Dwm",
     "Win32_System_Memory",
     "Win32_Foundation",
     "Win32_Security",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Controls",
     "Win32_UI_WindowsAndMessaging",
 ] }
 winreg = "0.56.0"
@@ -42,6 +48,7 @@ base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 [target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6"
 winrt-notification = "0.5.1"
 windows = { version = "0.61", features = [
     "Win32_Foundation",
