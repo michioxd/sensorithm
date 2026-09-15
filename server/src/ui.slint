@@ -352,6 +352,14 @@ export component MainWindow inherits Window {
                                     root.backdrop-mode-edited(root.backdrop-mode);
                                 }
                             }
+
+                            Text {
+                                text: "This option only works if you enabled transparency effects in Windows settings.";
+                                color: Palette.foreground;
+                                font-size: 10px;
+                                opacity: 0.65;
+                                wrap: word-wrap;
+                            }
                         }
                     }
 
