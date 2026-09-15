@@ -1,6 +1,6 @@
 [package]
 name = "sensorithm-server"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["michioxd"]
 description = "Windows server for sensorithm camera-based rhythm game sensors"
@@ -10,9 +10,9 @@ homepage = "https://github.com/michioxd/sensorithm"
 
 [package.metadata.winresource]
 CompanyName = "michioxd"
-FileDescription = "sensorithm camera sensor server"
+FileDescription = "sensorithm server"
 InternalName = "sensorithm-server"
-LegalCopyright = "Copyright © 2026 michioxd"
+LegalCopyright = "Released under the GNU General Public License v3.0"
 OriginalFilename = "sensorithm-server.exe"
 ProductName = "sensorithm server"
 
