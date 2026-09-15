@@ -79,6 +79,7 @@ pub fn setup(ui: &crate::MainWindow, initial_effect: BackdropEffect) {
 
         let dark_mode = matches!(winit_window.theme(), Some(Theme::Dark));
         ui.set_backdrop_enabled(apply(window, initial_effect, dark_mode));
+        set_window_icon(window);
 
         let ui_handle = ui.as_weak();
         window.on_winit_window_event(move |window, event| {
@@ -227,4 +228,54 @@ unsafe fn set_windows_10_acrylic(
     };
 
     unsafe { set_window_composition_attribute(hwnd, &mut data) != 0 }
+}
+
+#[cfg(windows)]
+fn set_window_icon(window: &slint::Window) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows::Win32::{
+        Foundation::{HWND, LPARAM, WPARAM, HINSTANCE},
+        System::LibraryLoader::GetModuleHandleW,
+        UI::WindowsAndMessaging::{
+            LoadImageW, SendMessageW, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTSIZE, WM_SETICON,
+        },
+    };
+    use windows::core::PCWSTR;
+
+    let slint_handle = window.window_handle();
+    let Ok(handle) = slint_handle.window_handle() else {
+        return;
+    };
+    let RawWindowHandle::Win32(win32) = handle.as_raw() else {
+        return;
+    };
+    let hwnd = HWND(win32.hwnd.get() as *mut _);
+
+    unsafe {
+        let hmodule = GetModuleHandleW(None).unwrap_or_default();
+        let hinstance = HINSTANCE(hmodule.0);
+        let icon_id = PCWSTR(1usize as *const u16);
+
+        let hicon_small = LoadImageW(Some(hinstance), icon_id, IMAGE_ICON, 16, 16, LR_DEFAULTSIZE)
+            .unwrap_or_default();
+        let hicon_big = LoadImageW(Some(hinstance), icon_id, IMAGE_ICON, 32, 32, LR_DEFAULTSIZE)
+            .unwrap_or_default();
+
+        if !hicon_small.is_invalid() {
+            let _ = SendMessageW(
+                hwnd,
+                WM_SETICON,
+                Some(WPARAM(ICON_SMALL as usize)),
+                Some(LPARAM(hicon_small.0 as isize)),
+            );
+        }
+        if !hicon_big.is_invalid() {
+            let _ = SendMessageW(
+                hwnd,
+                WM_SETICON,
+                Some(WPARAM(ICON_BIG as usize)),
+                Some(LPARAM(hicon_big.0 as isize)),
+            );
+        }
+    }
 }

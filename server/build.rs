@@ -16,6 +16,7 @@ fn main() {
 
     if target_os == "windows" {
         winresource::WindowsResource::new()
+            .set_icon("assets/ic.ico")
             .compile()
             .expect("failed to embed Windows executable metadata");
     }
