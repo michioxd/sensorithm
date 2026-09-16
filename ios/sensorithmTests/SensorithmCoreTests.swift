@@ -25,6 +25,13 @@ final class sensorithmCoreTests: XCTestCase {
         XCTAssertEqual(object?["type"] as? String, "settings")
     }
 
+    func testTorchStateUsesServerWireFormat() throws {
+        let frame = try ClientProtocol.controlFrame(for: .torchState(available: true, enabled: false))
+        let object = try JSONSerialization.jsonObject(with: frame.dropFirst(5)) as? [String: Any]
+        XCTAssertEqual(object?["type"] as? String, "torch_state")
+        XCTAssertEqual(object?["available"] as? Bool, true)
+    }
+
     func testLegacyRecalibrateAndInvalidSettings() throws {
         XCTAssertEqual(try ClientProtocol.parseServerMessage("RECALIBRATE"), .recalibrate)
         XCTAssertThrowsError(try ClientProtocol.parseServerMessage("{\"type\":\"settings\",\"settings\":{\"size_x\":-1}}"))

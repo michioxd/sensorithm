@@ -29,6 +29,7 @@ final class MainViewController: UIViewController {
     private var values: [UILabel] = []
     private var latestFps: Float = 0
     private var torchEnabled = false
+    private var torchAvailable = false
     private var frameGeometry: FrameGeometry?
     private var cameraAspectConstraint: NSLayoutConstraint?
     private var cameraTopConstraint: NSLayoutConstraint?
@@ -145,14 +146,16 @@ final class MainViewController: UIViewController {
         overlay.onOffsetChanged = { [weak self] in self?.updateZones() }
         overlay.onOffsetFinished = { [weak self] in self?.saveAndPublish() }
         connection.onStateChanged = { [weak self] state in
-            switch state {
-            case .disconnected: self?.status.text = "Disconnected"; self?.status.textColor = .systemRed; self?.connect.setTitle("Connect", for: .normal); self?.stopTelemetry()
-            case .connecting: self?.status.text = "Connecting..."; self?.status.textColor = .systemYellow; self?.connect.setTitle("Cancel", for: .normal)
-            case .connected(let version): self?.status.text = "Connected - v\(version)"; self?.status.textColor = .systemGreen; self?.connect.setTitle("Disconnect", for: .normal); self?.processor.resetOutput(); self?.saveAndPublish(); self?.startTelemetry()
-            case .rejected(let message): self?.status.text = message; self?.status.textColor = .systemRed; self?.connect.setTitle("Connect", for: .normal)
+            DispatchQueue.main.async {
+                switch state {
+                case .disconnected: self?.status.text = "Disconnected"; self?.status.textColor = .systemRed; self?.connect.setTitle("Connect", for: .normal); self?.stopTelemetry()
+                case .connecting: self?.status.text = "Connecting..."; self?.status.textColor = .systemYellow; self?.connect.setTitle("Cancel", for: .normal)
+                case .connected(let version): self?.status.text = "Connected - v\(version)"; self?.status.textColor = .systemGreen; self?.connect.setTitle("Disconnect", for: .normal); self?.processor.resetOutput(); self?.saveAndPublish(); self?.publishTorchState(); self?.startTelemetry()
+                case .rejected(let message): self?.status.text = message; self?.status.textColor = .systemRed; self?.connect.setTitle("Connect", for: .normal)
+                }
             }
         }
-        connection.onMessage = { [weak self] in self?.handle($0) }
+        connection.onMessage = { [weak self] message in DispatchQueue.main.async { self?.handle(message) } }
         connection.autoReconnectEnabled = { [weak self] in self?.config.autoReconnect ?? false }
         camera.onError = { [weak self] message in DispatchQueue.main.async { self?.status.text = message } }
         camera.onTorchAvailabilityChanged = { [weak self] available in
@@ -335,8 +338,10 @@ final class MainViewController: UIViewController {
         case .recalibrate: processor.recalibrate()
         case .settings(let settings):
             config.zones = ZoneSettingsCodable(sizePercentX: settings.sizeX, sizePercentY: settings.sizeY, spacingPercent: settings.spacing, angleDegrees: settings.angle, threshold: settings.threshold); config.exposure = settings.exposure; overlay.offsetX = settings.offsetX; overlay.offsetY = settings.offsetY; processor.setThreshold(Float(settings.threshold)); camera.setExposure(settings.exposure); for (index, value) in [settings.sizeX, settings.sizeY, settings.spacing, settings.angle, settings.exposure, settings.threshold].enumerated() { sliders[index].value = Float(value) }; renderSliderValues(); updateZones(); repository.save(config)
-        case .setTorch(let enabled): if !camera.setTorch(enabled) { connection.send(.error(operation: "torch", requestID: nil, message: "Flash is unavailable")) }
-        case .restartCamera: camera.stop(); camera.start()
+        case .setTorch(let enabled):
+            guard camera.setTorch(enabled) else { connection.send(.error(operation: "torch", requestID: nil, message: "Flash is unavailable")); return }
+            torchEnabled = enabled; publishTorchState()
+        case .restartCamera: camera.restart()
         case .requestPreview(let requestID):
             if !camera.requestPreview(requestID) { connection.send(.error(operation: "preview", requestID: requestID, message: "Camera is unavailable or another preview is pending")) }
         }
@@ -347,11 +352,14 @@ final class MainViewController: UIViewController {
         guard camera.setTorch(enabled) else { torch.isEnabled = false; return }
         torchEnabled = enabled
         if #available(iOS 13.0, *) { torch.setImage(UIImage(systemName: enabled ? "bolt.fill" : "bolt.slash.fill"), for: .normal) }
+        publishTorchState()
     }
     private func updateTorchAvailability(_ available: Bool) {
-        torchEnabled = false; torch.isEnabled = available
+        torchAvailable = available; torchEnabled = false; torch.isEnabled = available
         if #available(iOS 13.0, *) { torch.setImage(UIImage(systemName: "bolt.slash.fill"), for: .normal) }
+        publishTorchState()
     }
+    private func publishTorchState() { connection.send(.torchState(available: torchAvailable, enabled: torchEnabled)) }
     @objc private func resumeCamera() { camera.start() }
     private func startTelemetry() {
         batteryChanged()
