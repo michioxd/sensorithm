@@ -33,6 +33,8 @@ final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBufferDele
     var onTorchAvailabilityChanged: ((Bool) -> Void)?
     private let session = AVCaptureSession()
     private let queue = DispatchQueue(label: "ch.michioxd.sensorithm.camera")
+    private let outputQueue = DispatchQueue(label: "ch.michioxd.sensorithm.camera.output")
+    private let previewLock = NSLock()
     private weak var previewView: CameraPreviewView?
     private let ciContext = CIContext()
     private var pendingPreviewID: String?
@@ -49,6 +51,7 @@ final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBufferDele
     }
 
     func attachPreview(to preview: CameraPreviewView) {
+        precondition(Thread.isMainThread)
         previewView = preview
         preview.display(session: session)
     }
@@ -63,8 +66,12 @@ final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBufferDele
 
     func stop() { queue.async { if self.session.isRunning { self.session.stopRunning() }; self.resetFps() } }
 
+    func restart() { queue.async { self.restartOnQueue() } }
+
     func requestPreview(_ requestID: String) -> Bool {
         queue.sync {
+            previewLock.lock()
+            defer { previewLock.unlock() }
             guard session.isRunning, pendingPreviewID == nil else { return false }
             pendingPreviewID = requestID
             return true
@@ -114,7 +121,7 @@ final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBufferDele
     func select(_ option: Option) {
         queue.async {
             self.desiredDeviceID = option.deviceID; self.desiredWidth = option.width; self.desiredHeight = option.height; self.desiredFps = option.fps
-            self.restart()
+            self.restartOnQueue()
         }
     }
 
@@ -161,7 +168,7 @@ final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBufferDele
             let output = AVCaptureVideoDataOutput()
             output.alwaysDiscardsLateVideoFrames = true
             output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]
-            output.setSampleBufferDelegate(self, queue: queue)
+            output.setSampleBufferDelegate(self, queue: outputQueue)
             guard session.canAddOutput(output) else { onError?("Cannot configure camera output"); return }
             session.addOutput(output)
             output.connection(with: .video)?.videoOrientation = .portrait
@@ -169,9 +176,13 @@ final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBufferDele
         } catch { onError?(error.localizedDescription) }
     }
 
-    private func restart() {
+    private func restartOnQueue() {
         if session.isRunning { session.stopRunning() }
         resetFps()
+        previewLock.lock()
+        pendingPreviewID = nil
+        previewLock.unlock()
+        session.outputs.compactMap { $0 as? AVCaptureVideoDataOutput }.forEach { $0.setSampleBufferDelegate(nil, queue: nil) }
         session.inputs.forEach(session.removeInput)
         session.outputs.forEach(session.removeOutput)
         configureAndStart()
@@ -188,8 +199,11 @@ final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBufferDele
         frameCount += 1
         let elapsed = -fpsStart.timeIntervalSinceNow
         if elapsed >= 0.5 { onFps?(Float(frameCount) / Float(elapsed)); frameCount = 0; fpsStart = Date() }
-        guard let requestID = pendingPreviewID else { return }
+        previewLock.lock()
+        let requestID = pendingPreviewID
         pendingPreviewID = nil
+        previewLock.unlock()
+        guard let requestID else { return }
         do { onPreview?(requestID, .success(try encodePreview(buffer))) }
         catch { onPreview?(requestID, .failure(error)) }
     }

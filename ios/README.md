@@ -14,3 +14,5 @@ swift test
 ```
 
 The Xcode installation must include an iOS SDK platform to build the app target.
+
+Or alternatively, to generate an unsigned IPA for distribution, run `build-unsigned-ipa.sh`. *Xcode is still required to run.*
