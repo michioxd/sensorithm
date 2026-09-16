@@ -51,6 +51,9 @@ final class MainViewController: UIViewController {
         watermark.shadowColor = UIColor.black.withAlphaComponent(0.5)
         watermark.shadowOffset = CGSize(width: 2, height: 2)
         watermark.layer.shadowRadius = 4
+        watermark.isUserInteractionEnabled = true
+        watermark.accessibilityTraits = .button
+        watermark.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(showAbout)))
         status.translatesAutoresizingMaskIntoConstraints = false
         status.text = "Disconnected"
         status.textColor = .systemRed
@@ -152,6 +155,9 @@ final class MainViewController: UIViewController {
         connection.onMessage = { [weak self] in self?.handle($0) }
         connection.autoReconnectEnabled = { [weak self] in self?.config.autoReconnect ?? false }
         camera.onError = { [weak self] message in DispatchQueue.main.async { self?.status.text = message } }
+        camera.onTorchAvailabilityChanged = { [weak self] available in
+            DispatchQueue.main.async { self?.updateTorchAvailability(available) }
+        }
         camera.onPreview = { [weak self] requestID, result in
             switch result {
             case .success(let preview): self?.connection.send(.preview(requestID: requestID, width: preview.1, height: preview.2, jpegBytes: preview.0))
@@ -225,6 +231,14 @@ final class MainViewController: UIViewController {
     }
 
     @objc private func recalibrateSensors() { processor.recalibrate() }
+
+    @objc private func showAbout() {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
+        let alert = UIAlertController(title: "About sensorithm", message: "sensorithm by michioxd & BadAimWeeb\nVersion: v\(version)\nLicense: GPLv3\nGitHub: https://github.com/michioxd/sensorithm", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Source Code", style: .default) { _ in UIApplication.shared.open(URL(string: "https://github.com/michioxd/sensorithm")!) })
+        present(alert, animated: true)
+    }
 
     @objc private func keyboardChanged(_ notification: Notification) {
         guard let controls, let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
@@ -333,6 +347,10 @@ final class MainViewController: UIViewController {
         guard camera.setTorch(enabled) else { torch.isEnabled = false; return }
         torchEnabled = enabled
         if #available(iOS 13.0, *) { torch.setImage(UIImage(systemName: enabled ? "bolt.fill" : "bolt.slash.fill"), for: .normal) }
+    }
+    private func updateTorchAvailability(_ available: Bool) {
+        torchEnabled = false; torch.isEnabled = available
+        if #available(iOS 13.0, *) { torch.setImage(UIImage(systemName: "bolt.slash.fill"), for: .normal) }
     }
     @objc private func resumeCamera() { camera.start() }
     private func startTelemetry() {

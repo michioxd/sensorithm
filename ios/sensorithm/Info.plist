@@ -7,11 +7,11 @@
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>$(PRODUCT_NAME)</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1.2</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>0.1.3</string>
+    <key>CFBundleVersion</key><string>2</string>
     <key>LSRequiresIPhoneOS</key><true/>
-    <key>NSCameraUsageDescription</key><string>Sensorithm uses the camera to simulate air sensors.</string>
-    <key>NSLocalNetworkUsageDescription</key><string>Sensorithm connects to the Sensorithm server on your local network.</string>
+    <key>NSCameraUsageDescription</key><string>sensorithm uses the camera to simulate air sensors.</string>
+    <key>NSLocalNetworkUsageDescription</key><string>sensorithm connects to the sensorithm server on your local network.</string>
     <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
     <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
     <key>UILaunchStoryboardName</key><string></string>

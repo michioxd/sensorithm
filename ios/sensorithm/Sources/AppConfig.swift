@@ -33,7 +33,7 @@ public struct ZoneSettingsCodable: Codable, Equatable {
 
 public final class ConfigRepository {
     private let defaults: UserDefaults
-    private let key = "SensorithmConfig"
+    private let key = "sensorithmConfig"
 
     public init(defaults: UserDefaults = .standard) { self.defaults = defaults }
 

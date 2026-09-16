@@ -3,8 +3,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-archive_path="${ARCHIVE_PATH:-$PWD/build/Sensorithm.xcarchive}"
-ipa_path="${IPA_PATH:-$PWD/build/Sensorithm-unsigned.ipa}"
+archive_path="${ARCHIVE_PATH:-$PWD/build/sensorithm.xcarchive}"
+ipa_path="${IPA_PATH:-$PWD/build/sensorithm-unsigned.ipa}"
 staging_path="$(mktemp -d)"
 trap 'rm -rf "$staging_path"' EXIT
 
@@ -12,8 +12,8 @@ rm -rf "$archive_path"
 rm -f "$ipa_path"
 
 xcodebuild archive \
-  -project Sensorithm.xcodeproj \
-  -scheme Sensorithm \
+  -project sensorithm.xcodeproj \
+  -scheme sensorithm \
   -configuration Release \
   -destination 'generic/platform=iOS' \
   -archivePath "$archive_path" \
@@ -21,7 +21,7 @@ xcodebuild archive \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGN_IDENTITY=""
 
-app_path="$archive_path/Products/Applications/Sensorithm.app"
+app_path="$archive_path/Products/Applications/sensorithm.app"
 [[ -d "$app_path" ]] || { echo "Archived app not found: $app_path" >&2; exit 1; }
 
 mkdir -p "$staging_path/Payload" "$(dirname "$ipa_path")"

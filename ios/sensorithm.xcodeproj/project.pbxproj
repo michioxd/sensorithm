@@ -7,11 +7,11 @@
 		A1 /* Project */ = { isa = PBXProject; attributes = { LastUpgradeCheck = 1540; }; buildConfigurationList = A2; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; mainGroup = A3; productRefGroup = A3; projectDirPath = ""; targets = ( A4, ); };
 		A2 = { isa = XCConfigurationList; buildConfigurations = ( A5, A6, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 		A3 = { isa = PBXGroup; children = ( A7, A8, ); sourceTree = "<group>"; };
-		A4 = { isa = PBXNativeTarget; buildConfigurationList = A9; buildPhases = ( A10, A11, A12, ); dependencies = (); name = Sensorithm; productName = Sensorithm; productReference = A8; productType = "com.apple.product-type.application"; };
+		A4 = { isa = PBXNativeTarget; buildConfigurationList = A9; buildPhases = ( A10, A11, A12, ); dependencies = (); name = sensorithm; productName = sensorithm; productReference = A8; productType = "com.apple.product-type.application"; };
 		A5 = { isa = XCBuildConfiguration; buildSettings = { }; name = Debug; };
 		A6 = { isa = XCBuildConfiguration; buildSettings = { }; name = Release; };
-		A7 = { isa = PBXGroup; children = ( A13, A14, A15, A16, A17, A18, A21, A22, A23, A24, ); path = Sensorithm; sourceTree = "<group>"; };
-		A8 = { isa = PBXFileReference; explicitFileType = wrapper.application; path = Sensorithm.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A7 = { isa = PBXGroup; children = ( A13, A14, A15, A16, A17, A18, A21, A22, A23, A24, ); path = sensorithm; sourceTree = "<group>"; };
+		A8 = { isa = PBXFileReference; explicitFileType = wrapper.application; path = sensorithm.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A9 = { isa = XCConfigurationList; buildConfigurations = ( A19, A20, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 		A10 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = ( B1, B2, B3, B4, B5, B7, B8, B9, ); runOnlyForDeploymentPostprocessing = 0; };
 		A11 = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
@@ -27,8 +27,8 @@
 		A23 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/ZoneOverlayView.swift; sourceTree = "<group>"; };
 		A24 = { isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B1 = { isa = PBXBuildFile; fileRef = A13; }; B2 = { isa = PBXBuildFile; fileRef = A14; }; B3 = { isa = PBXBuildFile; fileRef = A15; }; B4 = { isa = PBXBuildFile; fileRef = A16; }; B5 = { isa = PBXBuildFile; fileRef = A17; }; B6 = { isa = PBXBuildFile; fileRef = A18; }; B7 = { isa = PBXBuildFile; fileRef = A21; }; B8 = { isa = PBXBuildFile; fileRef = A22; }; B9 = { isa = PBXBuildFile; fileRef = A23; }; B10 = { isa = PBXBuildFile; fileRef = A24; };
-		A19 = { isa = XCBuildConfiguration; buildSettings = { ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CLANG_ENABLE_MODULES = YES; CODE_SIGNING_ALLOWED = NO; INFOPLIST_FILE = Sensorithm/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 12.0; PRODUCT_BUNDLE_IDENTIFIER = ch.michioxd.sensorithm; PRODUCT_NAME = Sensorithm; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
-		A20 = { isa = XCBuildConfiguration; buildSettings = { ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CLANG_ENABLE_MODULES = YES; CODE_SIGNING_ALLOWED = NO; INFOPLIST_FILE = Sensorithm/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 12.0; PRODUCT_BUNDLE_IDENTIFIER = ch.michioxd.sensorithm; PRODUCT_NAME = Sensorithm; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+		A19 = { isa = XCBuildConfiguration; buildSettings = { ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CLANG_ENABLE_MODULES = YES; CODE_SIGNING_ALLOWED = NO; INFOPLIST_FILE = sensorithm/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 12.0; PRODUCT_BUNDLE_IDENTIFIER = ch.michioxd.sensorithm; PRODUCT_NAME = sensorithm; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
+		A20 = { isa = XCBuildConfiguration; buildSettings = { ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CLANG_ENABLE_MODULES = YES; CODE_SIGNING_ALLOWED = NO; INFOPLIST_FILE = sensorithm/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 12.0; PRODUCT_BUNDLE_IDENTIFIER = ch.michioxd.sensorithm; PRODUCT_NAME = sensorithm; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
 	};
 	rootObject = A1;
 }

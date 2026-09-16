@@ -30,6 +30,7 @@ final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBufferDele
     var onPreview: ((String, Result<(Data, Int, Int), Error>) -> Void)?
     var onFps: ((Float) -> Void)?
     var onFrameGeometry: ((Int, Int) -> Void)?
+    var onTorchAvailabilityChanged: ((Bool) -> Void)?
     private let session = AVCaptureSession()
     private let queue = DispatchQueue(label: "ch.michioxd.sensorithm.camera")
     private weak var previewView: CameraPreviewView?
@@ -148,6 +149,7 @@ final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBufferDele
             let input = try AVCaptureDeviceInput(device: device)
             guard session.canAddInput(input) else { onError?("Cannot configure camera input"); return }
             session.addInput(input)
+            onTorchAvailabilityChanged?(device.hasTorch)
             if let format {
                 do {
                     try device.lockForConfiguration()

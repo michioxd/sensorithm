@@ -1,7 +1,7 @@
 import XCTest
-@testable import SensorithmCore
+@testable import sensorithmCore
 
-final class SensorithmCoreTests: XCTestCase {
+final class sensorithmCoreTests: XCTestCase {
     private let settings = ZoneSettings(sizePercentX: 20, sizePercentY: 10, spacingPercent: 10, angleDegrees: 180, threshold: 30)
 
     func testZoneLayoutMatchesAndroidOrdering() {

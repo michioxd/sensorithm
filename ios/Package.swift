@@ -2,11 +2,11 @@
 import PackageDescription
 
 let package = Package(
-    name: "Sensorithm",
+    name: "sensorithm",
     platforms: [.macOS(.v13)],
-    products: [.library(name: "SensorithmCore", targets: ["SensorithmCore"])],
+    products: [.library(name: "sensorithmCore", targets: ["sensorithmCore"])],
     targets: [
-        .target(name: "SensorithmCore", path: "Sensorithm/Sources"),
-        .testTarget(name: "SensorithmCoreTests", dependencies: ["SensorithmCore"], path: "SensorithmTests"),
+        .target(name: "sensorithmCore", path: "sensorithm/Sources"),
+        .testTarget(name: "sensorithmCoreTests", dependencies: ["sensorithmCore"], path: "sensorithmTests"),
     ]
 )
