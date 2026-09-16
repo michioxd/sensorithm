@@ -1,0 +1,19 @@
+[package]
+name = "sensorithm-desktop"
+version = "0.1.0"
+edition = "2024"
+authors = ["michioxd"]
+description = "Client for sensorithm camera-based arcade rhythm game sensors"
+license = "GPL-3.0-only"
+repository = "https://github.com/michioxd/sensorithm"
+homepage = "https://github.com/michioxd/sensorithm"
+
+[package.metadata.winresource]
+CompanyName = "michioxd"
+FileDescription = "sensorithm client for Microsoft Windows"
+InternalName = "sensorithm-client"
+LegalCopyright = "Released under the GNU General Public License v3.0"
+OriginalFilename = "sensorithm-client.exe"
+ProductName = "sensorithm client"
+
+[dependencies]
