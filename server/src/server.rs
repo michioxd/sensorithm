@@ -196,6 +196,7 @@ pub async fn run_server(
                 ui.set_battery_percent(-1);
                 ui.set_battery_charging(false);
                 ui.set_device_temperature(-1000.0);
+                ui.set_device_temperature_label("".into());
                 ui.set_preview_loading(false);
                 ui.set_preview_status("Client disconnected".into());
                 ui.set_preview_width(0);
@@ -241,6 +242,7 @@ async fn handle_client(
 
     let ui_h = ui_handle.clone();
     let cid = client_id.clone();
+    let ios_thermal_state = metadata.description.starts_with("iOS ");
     let cdesc = metadata.description;
     let cname = metadata.name;
     let _ = slint::invoke_from_event_loop(move || {
@@ -262,6 +264,7 @@ async fn handle_client(
             ui.set_battery_percent(-1);
             ui.set_battery_charging(false);
             ui.set_device_temperature(-1000.0);
+            ui.set_device_temperature_label("".into());
             ui.set_preview_width(0);
             ui.set_preview_height(0);
             ui.set_preview_loading(false);
@@ -345,6 +348,7 @@ async fn handle_client(
                             &mut pending_preview,
                             &mut previous_battery_percent,
                             battery_low_warning_enabled.load(Ordering::Relaxed),
+                            ios_thermal_state,
                         );
                     }
                     Err(e) => {
@@ -379,6 +383,7 @@ async fn handle_client(
             ui.set_battery_percent(-1);
             ui.set_battery_charging(false);
             ui.set_device_temperature(-1000.0);
+            ui.set_device_temperature_label("".into());
             ui.set_preview_loading(false);
             ui.set_preview_status("Client disconnected".into());
             ui.set_preview_width(0);
@@ -396,6 +401,7 @@ fn handle_client_message(
     pending_preview: &mut Option<(String, tokio::time::Instant)>,
     previous_battery_percent: &mut Option<u8>,
     battery_low_warning_enabled: bool,
+    ios_thermal_state: bool,
 ) {
     if let ClientMessage::Preview {
         request_id,
@@ -510,6 +516,14 @@ fn handle_client_message(
                 ui.set_battery_percent(battery_percent as i32);
                 ui.set_battery_charging(charging);
                 ui.set_device_temperature(temperature_celsius.unwrap_or(-1000.0));
+                ui.set_device_temperature_label(
+                    if ios_thermal_state {
+                        temperature_celsius.map(ios_thermal_label).unwrap_or_default()
+                    } else {
+                        ""
+                    }
+                    .into(),
+                );
             }
             ClientMessage::Telemetry { .. } => {
                 ui.set_client_error("Client sent invalid telemetry".into());
@@ -522,6 +536,16 @@ fn handle_client_message(
             ClientMessage::Preview { .. } => unreachable!(),
         }
     });
+}
+
+fn ios_thermal_label(temperature: f32) -> &'static str {
+    match temperature.round() as i32 {
+        30 => "Nominal",
+        40 => "Fair",
+        50 => "Serious",
+        60 => "Critical",
+        _ => "Unknown",
+    }
 }
 
 fn crossed_low_battery_threshold(previous: Option<u8>, current: u8) -> Option<u8> {
@@ -546,7 +570,16 @@ fn set_preview_status(ui_handle: &slint::Weak<crate::MainWindow>, loading: bool,
 
 #[cfg(test)]
 mod tests {
-    use super::crossed_low_battery_threshold;
+    use super::{crossed_low_battery_threshold, ios_thermal_label};
+
+    #[test]
+    fn maps_ios_thermal_state_values_to_labels() {
+        assert_eq!(ios_thermal_label(30.0), "Nominal");
+        assert_eq!(ios_thermal_label(40.0), "Fair");
+        assert_eq!(ios_thermal_label(50.0), "Serious");
+        assert_eq!(ios_thermal_label(60.0), "Critical");
+        assert_eq!(ios_thermal_label(0.0), "Unknown");
+    }
 
     #[test]
     fn low_battery_notification_fires_when_crossing_configured_thresholds() {

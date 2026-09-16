@@ -121,6 +121,7 @@ export component MainWindow inherits Window {
     in property <int> battery-percent: -1;
     in property <bool> battery-charging: false;
     in property <float> device-temperature: -1000;
+    in property <string> device-temperature-label: "";
     in property <string> client-error: "";
     in property <image> preview-image;
     in property <int> preview-width: 0;
@@ -409,7 +410,7 @@ export component MainWindow inherits Window {
                             }
 
                             Text {
-                                text: "Connect one Android™ or iOS (soon™) client over the local network or with ADB port reverse.";
+                                text: "Connect one Android™ or iOS client over the local network (or Android™ only: with ADB port reverse).";
                                 color: Palette.foreground;
                                 font-size: 11px;
                                 opacity: 0.65;
@@ -456,7 +457,9 @@ export component MainWindow inherits Window {
                                 }
 
                                 Text {
-                                    text: root.device-temperature > -999
+                                    text: root.device-temperature-label != ""
+                                        ? "Temperature " + root.device-temperature-label
+                                        : root.device-temperature > -999
                                         ? "Temperature " + Math.round(root.device-temperature * 10) / 10 + " °C"
                                         : "Temperature unavailable";
                                     color: Palette.foreground;
