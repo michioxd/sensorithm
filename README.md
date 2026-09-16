@@ -4,20 +4,22 @@ Simulate an IR sensor for rhythm games using a camera. Communicates with the gam
 
 <img width="1403" height="855" alt="image" src="https://github.com/user-attachments/assets/b994b87e-1415-4d79-9691-3bca7992e0c9" />
 
-| Server | Client |
-|-|-|
-| ![server](https://github.com/user-attachments/assets/418f837b-84dd-4223-8405-a5252d73c1d0) | <img alt="client" height="800" src="https://github.com/user-attachments/assets/cce57bf7-25f9-4b38-9f51-9dd2af023714" /> |
+| Server | Client-Android | Client-iOS |
+|-|-|-|
+| ![server](https://github.com/user-attachments/assets/418f837b-84dd-4223-8405-a5252d73c1d0) | <img alt="client-android" height="400" src="https://github.com/user-attachments/assets/cce57bf7-25f9-4b38-9f51-9dd2af023714" /> | <img alt="client-ios" height="400" src="https://github.com/user-attachments/assets/0a12abfa-da75-4758-b7f1-64ecda962ba7" /> |
 
 ## Installation
 
 Make sure you have [Brokenithm server](https://github.com/tindy2013/Brokenithm-Android-Server) installed and configured alongside your game files.
 
 * **Server**: [`sensorithm-server.exe`](https://github.com/michioxd/sensorithm/releases/latest/download/sensorithm-server.exe) - Windows 10 or higher, 64-bit only. The `.pdb` file is optional and only needed for debugging.
-* **Client**: [`app-release.apk`](https://github.com/michioxd/sensorithm/releases/latest/download/app-release.apk) - Android 5.0 or higher.
+* **Client**: 
+  - [`app-release.apk`](https://github.com/michioxd/sensorithm/releases/latest/download/app-release.apk) - Android 5.0 or higher.
+  - [`sensorithm-unsigned.ipa`](https://github.com/michioxd/sensorithm/releases/latest/download/sensorithm-unsigned.ipa) - iOS 12.0 or higher (iOS 13 or later recommended).
 
 ## Recommended stack
 
-* Android device with camera as the Air sensor.
+* Android device with camera, or an old iPhone (iPhone 5s or later) as the IR/Air sensor.
 * Another Android device or tablet (example [Windows Tablet PC](https://github.com/michioxd/BrokenithmWindows) or Android tablet) as slider.
 
 ## License
